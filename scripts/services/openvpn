@@ -1,0 +1,402 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+# The openvpn script was written by:
+#    Jim Richardson <develop@aidant.net>
+########################################################
+
+#####################################################
+## Copyright (c) 2008 Jim Richardson
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+my $Debug = $ENV{'LOGWATCH_DEBUG'};
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'};
+my %Auth;
+my $Config;
+my %ConfigValues;
+my %ConnErrors;
+my %ConnectCauseDrop;
+my %Connections;
+my %Crypt;
+my %Error;
+my %IncorrectPassword;
+my %ManagementCommands;
+my %ManagementConnections;
+my $MaxClients;
+my $MaxConn;
+my %OtherList;
+my %PIDERRs;
+my %PluginCallFailure;
+my %PluginCallOK;
+my %VerifyList;
+my %VersionInfo;
+my %Warnings;
+
+if ( $Debug >= 5 ) {
+    print STDERR "\n\nDEBUG \n\n";
+}
+
+while (defined(my $ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+
+   if ($ThisLine =~ /^([\d]+\.[\d]+\.[\d]+\.[\d]+)\:([\d]+) TLS Auth Error: Auth Username\/Password verification failed for peer/) {
+      $IncorrectPassword{$1}++;
+   }
+
+   # normalise - this could possibly be used for more detailed per host statistics
+   # further down
+   $ThisLine =~ s/^([\d]+\.[\d]+\.[\d]+\.[\d]+)\:([\d]+) //;
+   $ThisLine =~ s/^([\S]+)\/([\d]+\.[\d]+\.[\d]+\.[\d]+)\:([\d]+) //;
+
+   if (
+      ($ThisLine =~ /Inactivity timeout \(--ping-restart\), restarting/) or
+      ($ThisLine =~ /^\/sbin\//) or
+      ($ThisLine =~ /^Attempting to establish TCP connection with [\d.]+:\d+/) or
+      ($ThisLine =~ /^Closing TUN\/TAP interface/) or
+      ($ThisLine =~ /^Connection reset, restarting \[\d+\]/) or
+      ($ThisLine =~ /^Control Channel Authentication/) or
+      ($ThisLine =~ /^Control Channel MTU parms/) or
+      ($ThisLine =~ /CRL CHECK OK: \/.*\//) or
+      ($ThisLine =~ /^Data Channel MTU parms/) or
+      ($ThisLine =~ /^Data Channel: using negotiated cipher/) or
+      ($ThisLine =~ /^Delayed exit in \d+ seconds/) or
+      ($ThisLine =~ /^Diffie-Hellman initialized/) or
+      ($ThisLine =~ /^event_wait : Interrupted system call \(code=\d+\)/) or
+      ($ThisLine =~ /^Exiting/) or
+      ($ThisLine =~ /^Expected Remote Options/) or
+      ($ThisLine =~ /^GID set to/) or
+      ($ThisLine =~ /^IFCONFIG POOL/) or
+      ($ThisLine =~ /^ifconfig_pool_read/) or
+      ($ThisLine =~ /^do_ifconfig/) or
+      ($ThisLine =~ /^succeeded -> ifconfig_pool_set/) or
+      ($ThisLine =~ /^IMPORTANT: OpenVPN's default port number is now 1194/) or
+      ($ThisLine =~ /^Initialization Sequence Completed/) or
+      ($ThisLine =~ /^Listening for incoming TCP connection on \S+:\d+/) or
+      ($ThisLine =~ /^LZO compression initializ/) or
+      ($ThisLine =~ /^Local Options (hash|String)/) or
+      ($ThisLine =~ /^MULTI: Learn:/) or
+      ($ThisLine =~ /^MULTI: multi_init called/) or
+      ($ThisLine =~ /^MULTI: multi_create_instance called/) or
+      ($ThisLine =~ /^MULTI: primary virtual IP for/) or
+      ($ThisLine =~ /^MULTI: primary virtual IPv6 for/) or
+      ($ThisLine =~ /^MULTI: TCP INIT maxclients=\d+ maxevents=\d+/) or
+      ($ThisLine =~ /^MULTI: bad source address from client .*, packet dropped/) or
+      ($ThisLine =~ /^MULTI_sva: pool returned IPv4=/) or
+      ($ThisLine =~ /^Need IPv6 code in mroute_extract_addr_from_packet/) or
+      ($ThisLine =~ /^NOTE: UID\/GID downgrade will be delayed because of --client, --pull, or --up-delay/) or
+      ($ThisLine =~ /OpenVPN .* built on [A-Z][a-z]{2} [ 12]?[0-9] [0-9]{4}/) or
+      ($ThisLine =~ /^OPTIONS IMPORT/) or
+      ($ThisLine =~ /^PLUGIN_CALL: plugin function /) or
+      ($ThisLine =~ /^PLUGIN_INIT: POST .* intercepted=/) or
+      ($ThisLine =~ /^Preserving previous TUN\/TAP instance: \w+/) or
+      ($ThisLine =~ /^PUSH: Received control message/) or
+      ($ThisLine =~ /^Re-using pre-shared static key/) or
+      ($ThisLine =~ /^Re-using SSL\/TLS context/) or
+      ($ThisLine =~ /read UDPv4 \[.*\]: No route to host \(code=[0-9]*\)/) or
+      ($ThisLine =~ /^Restart pause, \d+ second\(s\)/) or
+      ($ThisLine =~ /^ROUTE_GATEWAY/) or
+      ($ThisLine =~ /^send_push_reply/) or
+      ($ThisLine =~ /^SENT CONTROL/) or
+      ($ThisLine =~ /^SIGTERM\[hard,[^\]]*\] received, process exiting/) or
+      ($ThisLine =~ /^SIGTERM\[soft,[^\]]*\] received, client-instance exiting/) or
+      ($ThisLine =~ /^SIGUSR1\[soft,(connection-reset|ping-restart)\] received, (process|client-instance) restarting/) or
+      ($ThisLine =~ /Socket Buffers: R=\[[0-9]+->[0-9]+\] S=\[[0-9]+->[0-9]+\]/) or
+      ($ThisLine =~ /^TCP\/UDP: Closing socket/) or
+      ($ThisLine =~ /^TCP\/UDP: Dynamic remote address changed during TCP connection establishment/) or
+      ($ThisLine =~ /^TCP\/UDP: Preserving recently used remote address: /) or
+      ($ThisLine =~ /^TCP connection established with [\d.]+:\d+/) or
+      ($ThisLine =~ /^TCP connection established with \[AF_INET6?\]/) or
+      ($ThisLine =~ /^TCPv\d_(CLIENT|SERVER) link (local|remote)/) or
+      ($ThisLine =~ /^TLS-Auth MTU parms/) or
+      ($ThisLine =~ /^TLS: Initial packet from/) or
+      ($ThisLine =~ /^TLS: soft reset/) or
+      ($ThisLine =~ /^TLS: tls_process: killed expiring key$/) or
+      ($ThisLine =~ /^TLS: move_session: dest=.* src=.* reinit_src=[0-9]*/) or
+      ($ThisLine =~ /^TLS: tls_multi_process: untrusted session promoted to (semi-)?trusted/) or
+      ($ThisLine =~ /TLS: tls_multi_process: killed expiring key/) or
+      ($ThisLine =~ /^TLS: new session incoming connection from .*/) or
+      ($ThisLine =~ /TLS Error: TLS object -> incoming plaintext read error/) or
+      ($ThisLine =~ /TLS ERROR: received control packet with stale session-id=.*/) or
+      ($ThisLine =~ /^TUN\/TAP device \S+ opened/) or
+      ($ThisLine =~ /TUN\/TAP TX queue length set to [0-9]*/) or
+      ($ThisLine =~ /^TUN\/TAP device \S+ exists previously, keep at program end/) or
+      ($ThisLine =~ /^UDPv4 link /) or
+      ($ThisLine =~ /^UID set to/) or
+      ($ThisLine =~ /^VERIFY OK: nsCertType=\w+/) or
+      ($ThisLine =~ /^peer info: /) or
+      ($ThisLine =~ /^chroot to /) or
+      ($ThisLine =~ /^LDAP bind failed: Invalid credentials$/) or
+      ($ThisLine =~ /^MANAGEMENT: Client disconnected$/) or
+      ($ThisLine =~ /^MANAGEMENT: .* listening /) or
+      ($ThisLine =~ /(?:AEAD Decrypt|Authenticate\/Decrypt packet) error: bad packet ID \(may be a replay\): \[ #.* \] -- see the man page entry for --no-replay and --replay-window for more info or silence this warning with --mute-replay-warnings/)
+   ) {
+      # Don't care about these...
+   }  elsif (my ($status, $depth, $dn) = ( $ThisLine =~ /^VERIFY (.*): depth=(.*), (.*)/ )) {
+
+		#VERIFY OK: depth=0, /C=US/ST=TX/O=Aidant.Enterprises/OU=IT/CN=delta.aidant.net/Email=keymaster@aidant.net: 23 Time(s)
+      $VerifyList{"status: $status depth: $depth DN: $dn"}++;
+   }  elsif (my ($status, $dn) = ( $ThisLine =~ /^VERIFY X509NAME (.*): (.*)/ )) {
+      #VERIFY X509NAME OK: /C=US/ST=TX/O=Aidant.Enterprises/OU=IT/CN=delta.aidant.net/Email=keymaster@aidant.net: 23 Time(s)
+      $VerifyList{"status: $status X509Name DN: $dn"}++;
+   }  elsif (my ($status, $dn) = ( $ThisLine =~ /^CRL CHECK (.*): (.*)/ )) {
+
+		#CRL CHECK OK: C=US, ST=CO, L=Boulder, O=NWRA, OU=Boulder, CN=user, name=root, emailAddress=xxxx@xxxx.xxx
+      $VerifyList{"CRL check status: $status DN: $dn"}++;
+   } elsif ($ThisLine =~ /^TLS: Username\/Password authentication/) {
+      $VerifyList{$ThisLine}++;
+   } elsif ($ThisLine =~ /^user '.*' authenticated/) {
+      # This will be handled by the above message
+   } elsif ($ThisLine =~ /^Incorrect password supplied for .* "(.*)"/) {
+      $IncorrectPassword{$1}++;
+   } elsif ($ThisLine =~ m/^MULTI: new incoming connection would exceed maximum number of clients/) {
+      $MaxClients++;
+   } elsif ($ThisLine =~ m/^OpenVPN [\d.]+ [\w-]+ [\[\]\w ]+ built on [\w]+ +[\d]+ [\d]+$/) {
+      $VersionInfo{$ThisLine} = 1;
+   } elsif ($ThisLine =~ m/^library versions: /) {
+      $VersionInfo{$ThisLine} = 1;
+   } elsif (my ($config, $peer, $port) = ($ThisLine =~ m/^\[([\S]+)\] Peer Connection Initiated with [^\d]*([\d]+\.[\d]+\.[\d]+\.[\d]+)\:([\d]+)/)) {
+      push (@{$Connections{$config}{$peer}}, $port) unless grep(/^$port$/,@{$Connections{$config}{$peer}});
+   } elsif (my ($peer, $port) = ($ThisLine =~ m/^Peer Connection Initiated with [^\d]*([\d]+\.[\d]+\.[\d]+\.[\d]+)\:([\d]+)/)) {
+      push (@{$Connections{"client"}{$peer}}, $port) unless grep(/^$port$/,@{$Connections{"client"}{$peer}});
+   } elsif (my ($dir, $channel, $bits, $algo) = ($ThisLine =~ /^(Incoming|Outgoing) (Control Channel) Authentication: Using ([\d]+ bit) message hash '(\S+)' for HMAC authentication/)) {
+      $Auth{$channel}{$dir}{"$bits $algo"}++;
+   } elsif (my ($channel, $dir, $bits, $algo) = ($ThisLine =~ /^(Data Channel) (Encrypt|Decrypt): Using ([\d]+ bit) message hash '(\S+)' for HMAC authentication/)) {
+      $Auth{$channel}{$dir}{"$bits $algo"}++;
+   } elsif (my ($channel, $proto, $cipher) = ($ThisLine =~ /^(Control Channel): ([^,]+), cipher (.+)/)) {
+      $Crypt{$channel}{$proto}{$cipher}++;
+   } elsif (my ($channel, $dir, $algo, $bits) = ($ThisLine =~ /^(Data Channel) (Encrypt|Decrypt): Cipher '(\S+)' initialized with ([\d]+ bit) key/)) {
+      $Crypt{$channel}{$dir}{"$bits $algo"}++;
+   } elsif (my ($dir, $channel, $algo, $bits) = ($ThisLine =~ /^(Incoming|Outgoing) (Data Channel): Cipher '(\S+)' initialized with ([\d]+ bit) key/)) {
+      $Crypt{$channel}{$dir}{"$bits $algo"}++;
+   } elsif (my ($proto, $host, $port, $error) = ($ThisLine =~ /^(TCP|UDP): connect to ([\d.]+):(\d+) failed, will try again in \d+ seconds: (.*)/)) {
+      $ConnErrors{$error}{"$proto $host:$port"}++;
+   } elsif (my ($proto, $error) = ($ThisLine =~ /^read (\w+)_SERVER \[\]: (.*)/)) {
+      $ConnErrors{$error}{"$proto"}++;
+   } elsif (my ($name) = ($ThisLine =~ /MULTI: new connection by client '(.*)' will cause previous active sessions by this client to be dropped.  Remember to use the --duplicate-cn option if you want multiple clients using the same certificate or username to concurrently connect./)) {
+      $ConnectCauseDrop{$name}++;
+   } elsif (my ($Command) = ($ThisLine =~ /^MANAGEMENT: CMD '(.*)'/)) {
+      $ManagementCommands{$Command}++;
+   } elsif (my ($Connection) = ($ThisLine =~ /^MANAGEMENT: Client connected from (.*)/)) {
+      $ManagementConnections{$Connection}++;
+   } elsif ((my ($Err) = ($ThisLine =~ /(read UDPv4 \[ECONNREFUSED\]: Connection refused \(code=111\))/)) or
+      (my ($Err) = ($ThisLine =~ /(read UDPv4 \[EHOSTUNREACH\]: No route to host \(code=113\))/))) {
+      $Error{$Err}++;
+   } elsif (my ($PIDERR) = ($ThisLine =~ /^PID_ERR ([^[]+) \[/)) {
+      $PIDERRs{$PIDERR}++;
+   } elsif (my ($Warning) = ($ThisLine =~ /^WARNING: (.*)/)) {
+      $Warnings{$Warning}++;
+   } elsif (my ($plugin,$call,$status) = ($ThisLine =~ /^PLUGIN_CALL: POST (.*)\/(PLUGIN_.*) status=(.*)/)) {
+      if ($status == 0) {
+         $PluginCallOK{$plugin}{$call}++;
+      } else {
+         $PluginCallFailure{$plugin}{$call}++;
+      }
+   } elsif ($ThisLine =~ /(Current Parameter Settings|Connection profiles \[.*\]):$/) {
+      $Config = $1;
+   } elsif ($ThisLine =~ /Connection profiles END$/) {
+      $Config = "";
+   } elsif (my ($ConfigValue) = ($ThisLine =~ /^  (.*)/)) {
+      $ConfigValues{$Config}->{$ConfigValue} = 1;
+   } else {
+      # Report any unmatched entries...
+      # remove PID from named messages
+      #$ThisLine =~ s/^(client [.0-9]+)\S+/$1/;
+      $OtherList{$ThisLine}++;
+   }
+   #$LastLine = $ThisLine;
+}
+
+################################################
+
+
+if (keys %Warnings) {
+   print "\nWARNINGS:\n";
+   foreach my $Warning (sort keys %Warnings) {
+     print "   " . $Warning . ": " .$Warnings{$Warning}. " Time(s)\n";
+   }
+}
+
+if (keys %PIDERRs) {
+   print "\nPID_ERRs:\n";
+   foreach my $PIDERR (sort keys %PIDERRs) {
+     print "   " . $PIDERR . ": " .$PIDERRs{$PIDERR}. " Time(s)\n";
+   }
+}
+
+if(keys %ConnErrors) {
+   print "Connection Errors:\n";
+   foreach my $error (sort keys %ConnErrors) {
+      print "   $error:\n";
+      foreach my $host (sort keys %{$ConnErrors{$error}}) {
+         print "      $host: ".$ConnErrors{$error}{$host}." Time(s)\n";
+      }
+   }
+}
+
+if (keys %IncorrectPassword) {
+   print "\nIncorrect Password\n";
+   foreach my $DN (sort {$a cmp $b} keys %IncorrectPassword) {
+      print "   $DN: $IncorrectPassword{$DN} Time(s)\n";
+   }
+}
+
+if (keys %VerifyList) {
+   print "\nVerify\n";
+   foreach my $line (sort {$a cmp $b} keys %VerifyList) {
+      print "   $line: $VerifyList{$line} Time(s)\n";
+   }
+}
+
+if ($MaxClients) {
+   print "\nMaximum Number of Clients reached $MaxClients Time(s)\n";
+}
+
+if (keys %Connections) {
+   print "\nConnections:";
+   foreach my $config (sort keys %Connections) {
+      print "\n   Configuration $config:";
+      foreach my $peer (sort keys %{$Connections{$config}}) {
+         my $ports = $Connections{$config}{$peer};
+         print "\n      $peer connected " . ($#{$ports} + 1) . " Time(s), Ports:";
+         for (my $i = 0; $i <= $#{$ports}; $i++) {
+            print "\n        " if (($i + 16) % 20 == 0);
+            print " $$ports[$i]";
+         }
+      }
+      print "\n";
+   }
+}
+
+if (keys %Auth and $Detail >= 10) {
+   print "\nCiphers used for Authentication:";
+   foreach my $channel (sort keys %Auth) {
+      print "\n   $channel:";
+      foreach my $dir (sort keys %{$Auth{$channel}}) {
+         print "\n      $dir:";
+         foreach my $algo (sort keys %{$Auth{$channel}{$dir}}) {
+            print "\n         $algo used $Auth{$channel}{$dir}{$algo} Time(s)";
+         }
+      }
+      print "\n";
+   }
+}
+
+if (keys %Crypt and $Detail >= 10) {
+   print "\nCiphers used for Encryption:";
+   foreach my $channel (sort keys %Crypt) {
+      print "\n   $channel:";
+      foreach my $dir (sort keys %{$Crypt{$channel}}) {
+         print "\n      $dir:";
+         foreach my $algo (sort keys %{$Crypt{$channel}{$dir}}) {
+            print "\n         $algo used $Crypt{$channel}{$dir}{$algo} Time(s)";
+         }
+      }
+      print "\n";
+   }
+}
+
+if (keys %VersionInfo) {
+   print "\nVersion Information:\n";
+   foreach my $vers (sort keys %VersionInfo) {
+      print "   $vers\n"
+   }
+}
+
+if (keys %ConnectCauseDrop) {
+   print "\n Previous active sessions of the same client dropped upon new connection:\n";
+   foreach my $name (sort keys %ConnectCauseDrop) {
+      print "   client $name: $ConnectCauseDrop{$name} Time(s)\n"
+   }
+}
+
+if (keys %Error) {
+   print "\n UDPv4 errors:\n";
+   foreach my $Err (sort keys %Error) {
+     print "   " . $Err . ": " .$Error{$Err}. " Time(s)\n";
+   }
+}
+
+if (keys %PluginCallFailure) {
+   print "\nPlugin Call Failures:";
+   foreach my $plugin (sort keys %PluginCallFailure) {
+      print "\n   Plugin $plugin:";
+      foreach my $call (sort keys %{$PluginCallFailure{$plugin}}) {
+         my $times = $PluginCallFailure{$plugin}{$call};
+         print "\n      $call failed $PluginCallFailure{$plugin}{$call} Time(s)";
+      }
+      print "\n";
+   }
+}
+
+if (keys %PluginCallOK and $Detail >= 5) {
+   print "\nPlugin Call OK:";
+   foreach my $plugin (sort keys %PluginCallOK) {
+      print "\n   Plugin $plugin:";
+      foreach my $call (sort keys %{$PluginCallOK{$plugin}}) {
+         my $times = $PluginCallOK{$plugin}{$call};
+         print "\n      $call succeeded $PluginCallOK{$plugin}{$call} Time(s)";
+      }
+      print "\n";
+   }
+}
+
+if (keys %ManagementConnections and $Detail) {
+   print "\nManagement Connections from:\n";
+   foreach my $Connection (sort keys %ManagementConnections) {
+     print "   " . $Connection . ": " .$ManagementConnections{$Connection}. " Time(s)\n";
+   }
+}
+
+if (keys %ManagementCommands and $Detail) {
+   print "\nManagement Commands:\n";
+   foreach my $Command (sort keys %ManagementCommands) {
+     print "   " . $Command . ": " .$ManagementCommands{$Command}. " Time(s)\n";
+   }
+}
+
+if (keys %ConfigValues and $Detail >= 10) {
+   foreach my $config (sort keys %ConfigValues) {
+      print "\n$config:";
+      foreach my $configvalue (sort keys %{$ConfigValues{$config}}) {
+         print "\n    $configvalue";
+      }
+      print "\n";
+   }
+}
+
+if (keys %OtherList) {
+   print "\n**Unmatched Entries**\n";
+   foreach my $line (sort {$a cmp $b} keys %OtherList) {
+      print "   $line: $OtherList{$line} Time(s)\n";
+   }
+}
+
+exit(0);
+
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

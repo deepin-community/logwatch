@@ -1,0 +1,121 @@
+Sections of this file:
+
+- Customizing the configuration
+- More specific ranges
+- access.log parsing - service http
+- Getting fortunes in your language
+- Howto modify a filter
+- Logwatch runs daily for range yesterday by default
+
+
+
+Customizing the configuration:
+==============================
+
+Please read the documentation in
+/usr/share/doc/logwatch/HOWTO-Customize-LogWatch.gz.
+For modifying a filter also read the last section in this file.
+
+
+
+More specific ranges:
+====================
+
+Logwatch's range parameter supports a lot of range options if you apt-get 
+install libdate-manip-perl (Date::Manip in Perl terms). Type 
+logwatch --range Help
+for more information.
+
+
+
+Problems with getting logwatch messages through your MTA
+========================================================
+
+Logwatch may not always produce e-mails that strictly conform to all SMTP/Mail
+related RFCs. Some MTAs reject these messages. Many of these problems can be
+worked around by adding the "--encode base64" option to logwatch's command line
+(in /etc/cron.daily/00logwatch for the daily invocation by cron). Note however,
+that base64 encoding increases the mail size by about a factor of 1.33.
+
+
+
+access.log parsing - service http:
+==================================
+
+Since 6.1.2, there is a new format for specifying the logfile format.
+I could only test it for apache2. If it doesn't work for your webserver,
+please submit a bugreport with some LogLines.
+
+
+
+Getting fortunes in your language
+=================================
+
+If you want to see fortunes in your favourite language, you need to pass a 
+valid LC_ALL setting to logwatch. If you don't use a valid (read: enabled by 
+dpkg-reconfigure locales) value, logwatch (perl) will complain. To pass that 
+setting in the automatic daily run, you need to modify 
+/etc/cron.daily/00logwatch
+
+
+
+Howto modify a filter:
+======================
+
+Option #1:
+----------
+
+copy the filterscript from /usr/share/logwatch/scripts to
+/etc/logwatch/scripts, preserving the hierarchy. Then modfiy it. The
+disadvantage is that you will not be able to track upstream changes. Please
+read more in /usr/share/doc/logwatch/HOWTO-Customize-LogWatch.gz
+
+Option #2:
+----------
+
+patch the source, rebuild. This might be the better option if you have many
+machines to maintain.
+
+The steps required are:
+(This is meant to be short HOWTO, just in case you've never modified the 
+source of a debian package before)
+
+- download the source
+$ apt-get source logwatch
+
+- cd to source dir
+$ cd logwatch-$version
+
+- make the modifications
+$ $EDITOR $filetochange
+
+- Add your changes to debian/patches/ with dpkg-source
+$ dpkg-source --commit
+  This asks for a patch name and opens an editor to edit the patch
+  meta-information. You are not required to change anything in order to
+  continue, though.
+
+- Increment the version number
+$ dch -i
+  you get an editor with debian/changelog. Modify the version number so it's
+  only slightly larger than the current debian version (e.g. 5.2.2-2 =>
+  5.2.2-2.0.0.1)
+
+- build the package, eg:
+$ dpkg-buildpackage -rfakeroot
+  or
+$ debuild
+
+- install the package (requires root privileges)
+$ debi
+  or
+$ dpkg -i ../logwatch_$version.deb
+
+
+
+Logwatch runs daily for range yesterday by default
+==================================================
+
+If you don't want that, simply delete /etc/cron.daily/00logwatch or modify it.
+New versions of this package will preserve this change, thanks to dpkg's 
+configuration file handling.

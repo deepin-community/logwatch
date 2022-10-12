@@ -1,0 +1,140 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#######################################################
+## Copyright (c) 2013 Teemu Ikonen
+## Copyright (c) 2019 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my %IgnoreActions;
+if (defined($ENV{'rsyslogd_ignore_actions'})) {
+   foreach my $action (split(";",$ENV{'rsyslogd_ignore_actions'})) {
+      $IgnoreActions{$action} = 1;
+   }
+}
+my %IgnoreMessages;
+if (defined($ENV{'rsyslogd_ignore_messages'})) {
+   foreach my $message (split(";",$ENV{'rsyslogd_ignore_messages'})) {
+      $IgnoreMessages{$message} = 1;
+   }
+}
+my %IgnoreModules;
+if (defined($ENV{'rsyslogd_ignore_modules'})) {
+   foreach my $module (split(";",$ENV{'rsyslogd_ignore_modules'})) {
+      $IgnoreModules{$module} = 1;
+   }
+}
+my $Message;
+my $Reason;
+my %ActionResumed;
+my %ActionSuspended;
+my %DaemonActions;
+my %InvalidCerts;
+
+LINE:
+while (defined($ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+   foreach $Message (keys %IgnoreMessages) {
+      next LINE if $ThisLine =~ /$Message/i;
+   }
+   if (($Reason) = ($ThisLine =~ /^ ?\[origin software=\"rsyslogd\" .*\] (.*)/)) {
+      $DaemonActions{$Reason}++;
+   }
+   elsif (my ($Action, $Module) = $ThisLine =~ /action '(.*)' suspended(?: \(module '(.*)'\))?/) {
+      if (defined $Module) {
+         $ActionSuspended{"$Action ($Module)"}++ unless defined $IgnoreActions{$Action} or defined $IgnoreModules{$Module};
+      } else {
+         $ActionSuspended{$Action}++ unless defined $IgnoreActions{$Action};
+      }
+   }
+   elsif (my ($Action, $Module) = $ThisLine =~ /action '(.*)' resumed \(module '(.*)'\)/) {
+      $ActionResumed{"$Action ($Module)"}++ unless defined $IgnoreActions{$Action} or defined $IgnoreModules{$Module};
+   }
+   elsif (my ($Certificate) = $ThisLine =~ /invalid cert info: peer provided \d+ certificate\(s\)\. Certificate \d+ info: (.*);  \[/) {
+      $InvalidCertificate{$Certificate}++;
+   }
+   elsif (
+      # More detail for this in the invalid cert info line above
+      $ThisLine =~ /^not permitted to talk to peer, certificate invalid:/ or
+      $ThisLine =~ /^rsyslogd\'s (groupid|userid) changed to/ or
+      $ThisLine =~ /^imjournal: journal files changed, reloading/ or
+      $ThisLine =~ /^imjournal: journal reloaded/ or
+      $ThisLine =~ /^imuxsock: Acquired UNIX socket .* from systemd/ or
+      $ThisLine =~ /^message repeated \d+ times:/ or
+      $ThisLine =~ m!^imuxsock: Acquired UNIX socket '/run/systemd/journal/syslog' \(fd 3\) from systemd! or
+      0 # This line prevents blame shifting as lines are added above
+      ) {
+      # Ignore these lines
+   }
+   else {
+      # Report any unmatched entries...
+      $OtherList{$ThisLine}++;
+   }
+}
+
+if (keys %ActionSuspended) {
+    print "Rsyslogd actions suspended:\n";
+    foreach my $Action (sort keys %ActionSuspended) {
+        print "   $Action: $ActionSuspended{$Action} Times\n";
+    }
+    print "\n";
+}
+
+if (keys %ActionResumed) {
+    print "Rsyslogd actions resumed\n";
+    foreach my $Action (sort keys %ActionResumed) {
+        print "   $Action: $ActionResumed{$Action} Times\n";
+    }
+    print "\n";
+}
+
+if (keys %InvalidCertificate) {
+    print "Invalid certificates:\n";
+    foreach my $Certificate (sort keys %InvalidCertificate) {
+        print "   $Certificate: $InvalidCertificate{$Certificate} Times\n";
+    }
+    print "\n";
+}
+
+if (($Detail >=10) and (keys %DaemonActions) ) {
+    print "Rsyslogd Actions:\n";
+    foreach $Reason (sort keys %DaemonActions) {
+        print "   $Reason: $DaemonActions{$Reason} Times\n";
+    }
+    print "\n";
+}
+
+if (keys %OtherList) {
+   print "**** Unmatched entries ****\n";
+   foreach $Error (keys %OtherList) {
+      print "    $Error : $OtherList{$Error} Times\n";
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

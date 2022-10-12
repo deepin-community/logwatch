@@ -1,0 +1,140 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2020 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+use warnings;
+use URI::URL;
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Ignore_messages = $ENV{'ignore_messages'} || '^$';
+my $Ignore_profile_program = $ENV{'ignore_profile_program'} || '^$';
+my @PowerShell_Summarize_Users = split(',',$ENV{'powershell_summarize_users'});
+my $Laptops = $ENV{'laptops'} || '^$';
+my %Applications;
+
+while (defined(my $ThisLine = <STDIN>)) {
+   # User specified ignore messages, lower cased
+   next if $ThisLine =~ /$Ignore_messages/i;
+
+   my ($Criticality,$SourceName,$DateTime,$EventID,$Application,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra);
+   #Determine format
+   if ($ThisLine =~ /MSWinEventLog\[/) {  # Snare 4
+      #Parse
+      ($Criticality,$SourceName,$DateTime,$EventID,$Application,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra) =
+         ($ThisLine =~ /(\S+)\sMSWinEventLog\[(\d+)\]:(\w+)\t\d+\t([^\t]+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)/);
+   } elsif ($ThisLine =~ /MSWinEventLog\t/) { # Snare 3
+      #Parse
+      ($Criticality,$SourceName,$DateTime,$EventID,$Application,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra) =
+         ($ThisLine =~ /MSWinEventLog\t(\d+)\t([^\t]+)\t\d+\t([^\t]+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)/);
+   }
+   if (!defined($Hostname)) {
+      print STDERR "Cannot parse $ThisLine";
+      next;
+   }
+   next if $EventLogType eq "Information" and $ExpandedString !~ "BlueScreen";
+   next if $ExpandedString eq "N/A";
+
+   next if $SourceName =~ /^Microsoft-Windows-Store/;
+   next if $SourceName eq "Microsoft-Windows-SettingSync/Debug";
+   next if $Application =~ /^Microsoft-Windows-SettingsSync/;
+   next if $Application eq "Windows-ApplicationModel-Store-SDK";
+   next if $Application eq "Microsoft-Windows-Store";
+   next if $Application eq "Microsoft-Windows-WMI-Activity";
+
+   if ($Application eq "Microsoft-Windows-GroupPolicy") {
+      next if $ExpandedString =~ /Completed Security Extension Processing in \d+ milliseconds\./;
+      next if $ExpandedString =~ /roup Policy failed to discover the Domain Controller details in \d+ milliseconds\./;
+      next if $ExpandedString =~ /Skipped .* Extension based on Group Policy client-side processing rules\./;
+   } elsif ($Application eq "Microsoft-Windows-Security-LessPrivilegedAppContainer") {
+      next if $ExpandedString =~ /^Access to the a resource has been denied for a less privileged app container/;
+   } elsif ($Application eq "Microsoft-Windows-SMBClient") {
+      next if $ExpandedString =~ /^A network connection was disconnected/;
+      next if $ExpandedString =~ /^Failed to establish a network connection/;
+      next if $ExpandedString =~ /^The client lost its session to the server/;
+      next if $ExpandedString =~ /^The connection to the share was lost/;
+      next if $ExpandedString =~ /^The The server name cannot be resolved/;
+   } elsif ($Application eq "Microsoft-Windows-SMBServer") {
+      if (my ($ClientName, $UserName, $ShareName) = ($ExpandedString =~ /The share denied access to the client.*Client Name: (.*) Client Address: .* User Name: (.*) Session ID: .* Share Name: (.*) Share Path:/)) {
+         $ExpandedString = "Access denied to share $ShareName by $UserName from $ClientName";
+      }
+   }
+
+   # Modify some items that prevent de-duplication
+   if ($Detail < 10) {
+      $ExpandedString =~ s/(Task-S-)[0-9-]+/$1XXX/g;
+      $ExpandedString =~ s/(guid:|GUID:|Guid:|Guid is|KEY:|known folder|interface|PRINTENUM\\)( ?\{)[0-9A-Fa-f-]+\}/$1${2}XXX}/g;
+      $ExpandedString =~ s/(ClientProcessId =|ElapsedTime\(ms\):|NextScheduled\S+|Process ID:?|PID|Transaction [^:]*Time \(msec\):|Try) \d+/$1 XXX/g;
+      $ExpandedString =~ s/[\d.]+ (milli|)seconds/XXX $1seconds/g;
+      $ExpandedString =~ s,\d{4}/\d\d/\d\d \d\d:\d\d:\d\d(?:\.\d+)?,TIMESTAMP,g;
+      $ExpandedString =~ s,\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z?,TIMESTAMP,g;
+      $ExpandedString =~ s/(Hash|Message ID|Session ID):( ?0x)[0-9A-F]{2,16}/$1:${2}XXXX/g;
+      $ExpandedString =~ s/\d+ms/Xms/g;
+      $ExpandedString =~ s/nstance "\{[^}]+\}"/nstance XXXX/g;
+      $ExpandedString =~ s/(adalCorrelationId|client|ID \(request\)): [0-9a-f-]+/$1: XXXX/g;
+      $ExpandedString =~ s/ddress: ([^:]+):\d+/ddress: $1:XXXXX/g;
+   }
+
+   #print STDERR "Application = $Application ExpandedString = $ExpandedString\n";
+#2021-02-07T23:49:45.083111-08:00 contracting01.ad.nwra.com MSWinEventLog        2       Microsoft-Windows-PowerShell/Operational        97386   Sun Feb 07 23:49:44 2021        4104    Microsoft-Windows-PowerShell    appstats        User    Warning contracting01.ad.nwra.com       Execute a Remote Command                Creating Scriptblock text (1 of 2):  # Copyright © 2017 Chocolatey Software, Inc.  # Copyright © 2015 - 2017 RealDimensions Software, LLC  # Copyright © 2011 - 2015 RealDimensions Software, LLC & original
+      #($Criticality,$SourceName,$DateTime,$EventID,$Application,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra) =
+
+
+   #my $url = URI::URL->new("http://www.eventid.net/display.asp?eventid=$EventID&source=$Application");
+   #my $urlstr = $url->abs;
+   #$Applications{$Application}->{"$Hostname: $ExpandedString\n$url"}++;
+
+   if ($Application eq "Microsoft-Windows-PowerShell") {
+      # Only capture block 1
+      next if $ExpandedString =~ /^Creating Scriptblock text/ && $ExpandedString !~ /^Creating Scriptblock text \(1 /;
+      if (grep(/^$UserName$/i,@PowerShell_Summarize_Users)) {
+         $Applications{$SourceName}->{$Application}->{"$Hostname: $UserName $CategoryString"}++;
+      } else {
+         $Applications{$SourceName}->{$Application}->{"$Hostname: $UserName $CategoryString " . substr($ExpandedString, 0, 120)}++;
+      }
+   } else {
+      $Applications{$SourceName}->{$Application}->{"$Hostname: $ExpandedString"}++;
+   }
+}
+
+if (keys %Applications) {
+   foreach my $SourceName (sort(keys %Applications)) {
+      print "\n$SourceName\n";
+      foreach my $Application (sort(keys %{$Applications{$SourceName}})) {
+         print "\n    $Application\n";
+         foreach my $Error (sort(keys %{$Applications{$SourceName}->{$Application}})) {
+            print "        $Error : $Applications{$SourceName}->{$Application}->{$Error} Times\n";
+         }
+      }
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

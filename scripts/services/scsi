@@ -1,0 +1,95 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#######################################################
+## Copyright (c) 2008 Benjamin Baudoux
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+########################################################
+# This was written and is maintained by:
+#    cadtool@stepmind.com
+#
+# Heavily based on sshd script
+########################################################
+
+use strict;
+use Logwatch ':all';
+
+my $Debug = $ENV{'LOGWATCH_DEBUG'} || 0;
+my $DebugCounter = 0;
+my $Diskwarning = 0;
+my %ListDiskWarning = ();
+my @OtherList = ();
+
+if ( $Debug >= 5 ) {
+         print STDERR "\n\nDEBUG: Inside SCSI Filter \n\n";
+         $DebugCounter = 1;
+}
+
+while (defined(my $ThisLine = <STDIN>)) {
+
+    if ( $Debug >= 5 ) {
+       print STDERR "DEBUG($DebugCounter): $ThisLine";
+       $DebugCounter++;
+    }
+    chomp($ThisLine);
+    if ( 0 or
+        ($ThisLine =~ m/target/)    # startup
+    ) {
+       # Ignore these
+    } elsif ( ($ThisLine =~ m/WARNING:/) or
+              ($ThisLine =~ m/Requested Block:/) or
+              ($ThisLine =~ m/Sense Key:/) or
+              ($ThisLine =~ m/Vendor:/) or
+              ($ThisLine =~ m/ASC:/)
+    ) {
+       $ListDiskWarning{$ThisLine} += 1;
+       if ( $ThisLine =~ m/WARNING:/ )
+       {
+         $Diskwarning++;
+       }
+    } else {
+       # Report any unmatched entries...
+       push @OtherList, "$ThisLine\n";
+    }
+}
+
+###########################################################
+
+if ($Diskwarning) {
+    print "\nYou may have R/W errors on your device " . $Diskwarning . " Time(s)\n";
+    print "$_: $ListDiskWarning{$_} time(s)\n" foreach keys %ListDiskWarning;
+}
+
+
+if ($#OtherList >= 0) {
+    print "\n**Unmatched Entries**\n";
+    print @OtherList;
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

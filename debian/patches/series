@@ -1,0 +1,5 @@
+0001-00-debspecific-disable-su-reporting-in-secure.diff.patch
+0002-logfiles-vsftpd.conf-Use-custom-pattern-for-applystd.patch
+0003-Ignore-ecryptfs-automounting-messages-in-cron.patch
+0004-scripts-mdadm-Fix-parsing-of-mdadm.conf-handle-ignor.patch
+0005-clam-update-Fix-encoding.patch

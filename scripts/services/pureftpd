@@ -1,0 +1,180 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#######################################################
+## Copyright (c) 2008 Chris Smith
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+##########################################################################
+# Written & Maintained by Chris Smith (csmith@squiz.net)
+##########################################################################
+
+$Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'};
+$ShowLogins  = $ENV{'show_logins'};
+$ShowLogouts = $ENV{'show_logouts'};
+$ShowDataStats = $ENV{'show_data_stats'};
+$ShowDataTransfers = $ENV{'show_data_transfers'};
+$ShowNewConnections = $ENV{'show_new_connections'};
+$IgnoreUnmatched = $ENV{'pureftpd_ignore_unmatched'} || 0;
+$MinAvgSize = 200*1024 if (!defined ($MinAvgSize = $ENV{'min_avg_file_size'}));
+$TopPeopleNr = 3 if (!defined ($TopPeopleNr = $ENV{'top_people_nr'}));
+
+$PureShutdown = 0;
+
+while (defined($ThisLine = <STDIN>)) {
+   if (
+      ( $ThisLine =~ /last message repeated/ ) or
+      ( $ThisLine =~ /Timeout/) or
+      ( $ThisLine =~ /Can't change directory/) or
+      ( $ThisLine =~ /File successfully renamed or moved/) or
+      ( $ThisLine =~ /This is a private system - No anonymous login/) or
+      ( $ThisLine =~ /Authentication failed for user/) or
+      ( $ThisLine =~ /Transfer aborted/) or
+      ( $ThisLine =~ /pure-ftpd startup( |) succeeded/)
+   ) {
+      #We don't care about these
+   } elsif (($IP,$j) = ($ThisLine =~ /\@(.*?)\)(.*?)new connection/i )) {
+      $NewConnections{$IP}++;
+   } elsif (($IP,$j) = ($ThisLine =~ /\@(.*?)\)(.*?)logout/i )) {
+      $Logouts{$IP}++;
+   } elsif (($IP,$j) = ($ThisLine =~ /\@(.*?)\)(.*?)unable to set up secure anonymous ftp/i )) {
+      $SecureAnon{$IP}++;
+   } elsif (($IP,$User) = ($ThisLine =~ /\@(.*?)\)\s*\[info\]\s*(.*?) is now logged in/i )) {
+      $Logins->{$IP}->{$User}++;
+   } elsif (($j,$ConnectionCount,$IP) = ($ThisLine =~ /(.*?)too many connections \((.*?)\) from this ip\: \[(.*?)\]/i )) {
+      $TooManyConnections->{$ConnectionCount}->{$IP}++;
+   } elsif (($User,$Location,$File,$Direction, $Size, $Speed) = ($ThisLine =~ /\((.*?)\@(.*?)\)\s+\[\w+\]\s+(.*?)\s(downloaded|uploaded)\s+\((\d+) bytes, (.+)KB\/sec\)/)) {
+      $Transfers->{$Direction}->{$User}->{$Location}->{$File}++;
+      $Stats->{$Direction}->{"files_count"}++;
+      $Stats->{$Direction}->{"files_size"} += $Size;
+      $Stats->{$Direction}->{"people"}->{$User} += $Size;
+      if ($Size >= $MinAvgSize) {
+         $Stats->{$Direction}->{"speed"}->{"max"} = $Speed
+            if ($Stats->{$Direction}->{"speed"}->{"max"} < $Speed);
+         $Stats->{$Direction}->{"speed"}->{"tmp_size"} += $Size;
+         $Stats->{$Direction}->{"speed"}->{"tmp_time"} += $Size/($Speed*1024);
+      }
+   } elsif ($ThisLine =~ m/pure-ftpd shutdown( |) succeeded/) {
+      $PureShutdown++;
+   } else {
+      # Report any unmatched entries...
+      push @OtherList,$ThisLine;
+   }
+}
+
+##########################
+#
+
+if ($PureShutdown > 0) {
+   print "\nPure-ftpd shutdown $PureShutdown Time(s)\n";
+}
+
+if ($ShowNewConnections) {
+   if (keys %NewConnections) {
+      print "\nNew Connections:\n";
+      foreach $Line (sort {$a cmp $b} keys %NewConnections) {
+         print "\t" . $Line . " - ". $NewConnections{$Line} . " Time(s)\n";
+      }
+   }
+}
+
+if ($ShowLogins) {
+   if (keys %{$Logins}) {
+      print "\nSuccessful Logins:\n";
+      foreach $Line (sort {$a cmp $b} keys %{$Logins}) {
+         foreach $Detail (sort {$a cmp $b} keys %{$Logins->{$Line}}) {
+            print "\t" . $Detail. " (" . $Line . ") - ". $Logins->{$Line}->{$Detail} . " Time(s)\n";
+         }
+      }
+   }
+}
+
+if (keys %{$TooManyConnections}) {
+   print "\nToo Many Connections:\n";
+   foreach $Line (sort {$a cmp $b} keys %{$TooManyConnections}) {
+      foreach $Detail (sort {$a cmp $b} keys %{$TooManyConnections->{$Line}}) {
+         print "\t" . $Detail. " (" . $Line . " connections) - ". $TooManyConnections->{$Line}->{$Detail} . " Time(s)\n";
+      }
+   }
+}
+
+if ($ShowDataStats) {
+   foreach $Direction (keys %{$Stats}) {
+      print "\nTransfer statistics - $Direction files:\n";
+
+      print "\t$Stats->{$Direction}->{files_count} $Direction files\n";
+      printf "\t%.2f $Direction MB\n", ($Stats->{$Direction}->{'files_size'}/1024)/1024;
+      if ($Stats->{$Direction}->{speed}) {
+         print "\t$Stats->{$Direction}->{speed}->{max}KB max speed\n";
+         printf "\t%.2fKB/s average speed\n", $Stats->{$Direction}->{'speed'}->{'tmp_size'}/$Stats->{$Direction}->{'speed'}->{'tmp_time'}/1024;
+      }
+      @top_people = sort { $Stats->{$Direction}->{'people'}->{$b} <=> $Stats->{$Direction}->{'people'}->{$a} } keys %{ $Stats->{$Direction}->{'people'} };
+      if (@top_people) {
+         print "\tTop $TopPeopleNr people:\n";
+         foreach $User (splice @top_people, 0, $TopPeopleNr) {
+            printf "\t\t%7.2fMB $User\n", $Stats->{$Direction}->{'people'}->{$User}/1024/1024;
+         }
+      }
+   }
+}
+
+if ($ShowDataTransfers) {
+   foreach $Direction (keys %{$Transfers}) {
+      print "\nData $Direction:\n";
+      foreach $User (sort {$a cmp $b} keys %{ $Transfers->{$Direction} }) {
+         foreach $Location (sort {$a cmp $b} keys %{ $Transfers->{$Direction}->{$User} }) {
+            foreach $Filename (sort {$a cmp $b} keys %{ $Transfers->{$Direction}->{$User}->{$Location}}) {
+               print "\tUser " . $User . " " . $Direction . " " . $Filename . " from " . $Location . " - ". $Direction->{$User}->{$Location}->{$Filename} . " Time(s)\n";
+            }
+         }
+      }
+   }
+}
+
+if (keys %SecureAnon) {
+   print "\nUnsuccessful Secure Anonymous Connections:\n";
+   foreach $Line (sort {$a cmp $b} keys %SecureAnon) {
+      print "\t" . $Line . " - ". $SecureAnon{$Line} . " Time(s)\n";
+   }
+}
+
+if ($ShowLogouts) {
+   if (keys %Logouts) {
+      print "\nLogouts:\n";
+      foreach $Line (sort {$a cmp $b} keys %Logouts) {
+         print "\t" . $Line . " - ". $Logouts{$Line} . " Time(s)\n";
+      }
+   }
+}
+
+if (($#OtherList >= 0) and (not $IgnoreUnmatched)){
+   print "\n**Unmatched Entries**\n";
+   print @OtherList;
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

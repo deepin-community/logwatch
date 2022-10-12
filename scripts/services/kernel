@@ -1,0 +1,276 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#####################################################
+## Copyright (c) 2008 Kirk Bauer
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+use Logwatch ':ip';
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Ignore_faults = $ENV{'ignore_faults'};
+my $Ignore_rpcsec_expired = $ENV{'ignore_rpcsec_expired'} || 0;
+my $Ignore_messages = $ENV{'kernel_ignore_messages'} || '^$';
+my %SYNflood = ();
+my %RAIDErrors = ();
+my %DRBDErrors = ();
+my %SegFaults = ();
+my %GPFaults = ();
+my %TrapInt3s = ();
+my %UnalignedErrors = ();
+my %FPAssists = ();
+my %OOM = ();
+my %Errors = ();
+my %Kernel = ();
+my %EDACs = ();
+my %NFS = ();
+my %EXT4Volume = ();
+my %EXT4 = ();
+
+while (defined(my $ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+   next if ($ThisLine eq '');
+   # Remove timestamp if present
+   $ThisLine =~ s/^\[\s*\d+\.\d+\]\s*//;
+
+   if (
+      # filter out audit messages - these should be parsed by the audit
+      # service
+      ($ThisLine =~ /^\s*(type=\d+\s+)?audit\(/)
+      # following now in iptables service
+      or ($ThisLine =~ /^Packet log: .*PROTO=/)
+      or ($ThisLine =~ /IN=.*OUT=.*SRC=.*DST=.*PROTO=/)
+      or ($ThisLine =~ /RAS: Correctable Errors collector initialized/)
+      # user specified ignore messages, lower cased
+      or ($ThisLine =~ /$Ignore_messages/i)
+      ) { # ignore the above strings
+   } elsif ( my ($from,$on) = ( $ThisLine =~ /^Warning: possible SYN flood from ([^ ]+) on ([^ ]+):.+ Sending cookies/ ) ) {
+      my $Fullfrom = LookupIP($from);
+      my $Fullon = LookupIP($on);
+      $SYNflood{$Fullon}{$Fullfrom}++;
+   } elsif ($ThisLine =~ /continuing in degraded mode/) {
+      $RAIDErrors{$ThisLine}++;
+   } elsif ($ThisLine =~ /([^(]*)\[\d+\]: segfault at/) {
+      $SegFaults{$1}++;
+   } elsif ($ThisLine =~ /([^(]*)\[\d+\] general protection/) {
+      $GPFaults{$1}++;
+   } elsif ($ThisLine =~ /([^(]*)\[\d+\] trap int3 /) {
+      $TrapInt3s{$1}++;
+   } elsif ($ThisLine =~ /([^(]*)\(\d+\): unaligned access to/) {
+      $UnalignedErrors{$1}++;
+   } elsif ($ThisLine =~ /([^(]*)\(\d+\): floating-point assist fault at ip/) {
+      $FPAssists{$1}++;
+   } elsif ($ThisLine =~ /(?:[KK]illed|[Kk]ill) process \d+ \((.*)\)/) {
+      $OOM{$1}++;
+   } elsif ($ThisLine =~ /(EDAC (MC|PCI)\d:.*)/) {
+      # Standard boot messages
+      next if $ThisLine =~ /Giving out device to /;
+      $EDACs{$1}++;
+   } elsif ($ThisLine =~ /(block drbd\d+): Online verify found (\d+) \d+k block out of sync/) {
+      $DRBDErrors{$1}{"$2 block(s) out of sync"} = 1;
+   } elsif ($ThisLine =~ /(block drbd\d+): \[.*\] sock_sendmsg time expired/) {
+      $DRBDErrors{$1}{"sock_sendmsg time expired"}++;
+   } elsif ($ThisLine =~ /(block drbd\d+): Began resync as (SyncSource|SyncTarget)/) {
+      $DRBDErrors{$1}{"Began resync as $2"}++;
+   } elsif ( ( my $errormsg ) = ( $ThisLine =~ /(.*?error.{0,17})/i ) ) {
+      # filter out smb open/read errors cased by insufficient permissions
+      my $SkipError = 0;
+      $SkipError = 1 if $ThisLine =~ /smb_readpage_sync: .*open failed, error=-13/;
+      $SkipError = 1 if $ThisLine =~ /smb_open: .* open failed, result=-13/;
+      $SkipError = 1 if $ThisLine =~ /smb_open: .* open failed, error=-13/;
+      # filter out error_exit in stack traces caused by OOM conditions
+      $SkipError = 1 if $ThisLine =~ /\[<[\da-f]+>\] error_exit\+0x/;
+      # These are informative, not errors
+      $SkipError = 1 if $ThisLine =~ /ACPI _OSC request failed \(AE_ERROR\), returned control mask: 0x1d/;
+      $SkipError = 1 if $ThisLine =~ /ERST: Error Record Serialization Table \(ERST\) support is initialized/;
+      $SkipError = 1 if $ThisLine =~ /GHES: Generic hardware error source: \d+ notified via .* is not supported/;
+      $SkipError = 1 if $ThisLine =~ /HEST: Enabling Firmware First mode for corrected errors/;
+      $SkipError = 1 if $ThisLine =~ /PCIe errors handled by (?:BIOS|OS)/;
+      # These happen when kerberos tickets expire, which can be normal
+      $SkipError = 1 if $ThisLine =~ /Error: state manager encountered RPCSEC_GSS session expired against NFSv4 server/ && $Ignore_rpcsec_expired;
+      $SkipError = 1 if $ThisLine =~ /RAS: Correctable Errors collector initialized/;
+      # filter out mount options
+      $SkipError = 1 if $ThisLine =~ /errors=(?:continue|remount-ro|panic)/;
+      $Errors{$errormsg}++ if ( (! $SkipError) || ($Detail > 8));
+   } elsif ( ( my ($Volume, $errormsg) ) = ( $ThisLine =~ /^EXT4-fs \(([^)]+)\): (.*)/ ) ) {
+      if ($errormsg =~ /INFO: recovery required on readonly filesystem/) {
+         $EXT4Volume{$Volume} = 1;
+         push @{$EXT4{$Volume}}, $errormsg;
+      } elsif ($EXT4Volume{$Volume}) {
+         push @{$EXT4{$Volume}}, $errormsg if $EXT4{$Volume};
+         delete $EXT4Volume{$Volume} if ($errormsg =~ /recovery complete/);
+      }
+   } elsif ( ( my $errormsg ) = ( $ThisLine =~ /((BUG|WARNING|INFO):.{0,40})/ ) ) {
+      $Errors{$errormsg}++;
+   } elsif ( ( my $host ) = ( $ThisLine =~ /^nfs: server (.*) not responding/ ) ) {
+      $NFS{$host}++;
+   # OTHER
+   } else {
+      # XXX For now, going to ignore all other kernel messages as there
+      # XXX are practically an infinite number and most of them are obviously
+      # XXX not parsed here at this time.
+      # filter out smb open/read errors cased by insufficient permissions
+      my $SkipError = 0;
+      $SkipError = 1 if $ThisLine =~ /smb_readpage_sync: .*open failed, error=-13/;
+      $SkipError = 1 if $ThisLine =~ /smb_open: .* open failed, result=-13/;
+      $SkipError = 1 if $ThisLine =~ /smb_open: .* open failed, error=-13/;
+      $SkipError = 1 if $ThisLine =~ /block drbd\d+: Out of sync: start=\d+/;
+      $SkipError = 1 if $ThisLine =~ /block drbd\d+: updated( sync)? UUIDs?/i;
+      $SkipError = 1 if $ThisLine =~ /block drbd\d+: Resync done/;
+      $SkipError = 1 if $ThisLine =~ /block drbd\d+: cs:(?:Ahead|Behind) rs_left/;
+      $SkipError = 1 if $ThisLine =~ /block drbd\d+: \d+ % had equal checksums, eliminated:/;
+      $Kernel{$ThisLine}++ if ( (! $SkipError) || ($Detail > 8)) ;
+   }
+}
+
+if (keys %SYNflood) {
+   print "\nWarning: SYN flood on:\n";
+   foreach my $Thisone (sort {$a cmp $b} keys %SYNflood) {
+      print "   " . $Thisone . " from:\n";
+      foreach my $Next (sort {$a cmp $b} keys %{$SYNflood{$Thisone}}) {
+         print "      " . $Next . ": $SYNflood{$Thisone}{$Next} Time(s)\n";
+      }
+   }
+}
+
+if (keys %RAIDErrors) {
+   print "\nWARNING:  RAID Errors Present\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %RAIDErrors ) {
+      print "   $Thisone ...:  $RAIDErrors{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %DRBDErrors) {
+   print "\nWARNING:  DRBD Errors Present\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %DRBDErrors ) {
+      foreach my $Msg (sort {$a cmp $b} keys %{$DRBDErrors{$Thisone}}) {
+         print "   $Thisone: $Msg";
+         print " :  $DRBDErrors{$Thisone}{$Msg} Time(s)" if $DRBDErrors{$Thisone}{$Msg} > 1;
+         print "\n";
+      }
+   }
+}
+
+if (keys %SegFaults) {
+   my $header_printed=0;
+   foreach my $Thisone ( sort {$a cmp $b} keys %SegFaults ) {
+      if ($Thisone =~ /^$Ignore_faults$/) { next; }
+      if (!$header_printed) {
+         print "\nWARNING:  Segmentation Faults in these executables\n";
+         $header_printed=1;
+      }
+      print "   $Thisone :  $SegFaults{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %GPFaults) {
+   my $header_printed=0;
+   foreach my $Thisone ( sort {$a cmp $b} keys %GPFaults ) {
+      if ($Thisone =~ /^$Ignore_faults$/) { next; }
+      if (!$header_printed) {
+         print "\nWARNING:  General Protection Faults in these executables\n";
+         $header_printed=1;
+      }
+      print "   $Thisone :  $GPFaults{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %TrapInt3s) {
+   my $header_printed=0;
+   foreach my $Thisone ( sort {$a cmp $b} keys %TrapInt3s ) {
+      if ($Ignore_faults =~ /\b\Q$Thisone\E\b/i) { next; }
+      if (!$header_printed) {
+         print "\nWARNING:  Trap int3 in these executables\n";
+         $header_printed=1;
+      }
+      print "   $Thisone :  $TrapInt3s{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %UnalignedErrors) {
+   print "\nWARNING:  Unaligned Errors in these executables\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %UnalignedErrors ) {
+      print "   $Thisone :  $UnalignedErrors{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %FPAssists) {
+   print "\nWARNING:  Floating-Point Assists in these executables\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %FPAssists ) {
+      print "   $Thisone :  $FPAssists{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %OOM) {
+   print "\nWARNING:  Out of memory killer killed these executables\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %OOM ) {
+      print "   $Thisone :  $OOM{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %Errors) {
+   print "\nWARNING:  Kernel Errors Present\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %Errors ) {
+      print "   $Thisone ...:  $Errors{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %EDACs) {
+   print "\nWARNING:  Kernel EDAC Messages\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %EDACs ) {
+      print "   $Thisone ...:  $EDACs{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %NFS) {
+   print "\nWARNING:  NFS Server Not Responding Messages\n";
+   foreach my $Thisone ( sort {$a cmp $b} keys %NFS ) {
+      print "   $Thisone ...:  $NFS{$Thisone} Time(s)\n";
+   }
+}
+
+if (keys %EXT4) {
+   print "\nWARNING:  Ext4 Errors Present\n";
+   foreach my $Volume ( sort {$a cmp $b} keys %EXT4 ) {
+      print "   $Volume:\n";
+      foreach my $Msg (@{$EXT4{$Volume}}) {
+         print "      $Msg\n";
+      }
+   }
+}
+
+# OTHER
+if ( ($Detail >= 5) and (keys %Kernel) ) {
+   print "\n";
+   foreach my $Thisone (sort {$a cmp $b} keys %Kernel) {
+      print $Kernel{$Thisone} . " Time(s): " . $Thisone . "\n";
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

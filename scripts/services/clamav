@@ -1,0 +1,190 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+#
+# Written by S. Schimkat <www.schimkat.dk>.
+#
+########################################################
+
+########################################################
+## Copyright (c) 2008 S. Schimkat
+## Copyright (c) 2015 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || $ENV{'clamav_detail_level'} || 0;
+my $IgnoreUnmatched = $ENV{'clamav_ignoreunmatched'} || 0;
+my $DaemonStart;
+my $DaemonStartTime;
+my $DaemonStop;
+my $DatabaseReloads;
+my $DatabaseViruses;
+my @OtherList;
+my %BoundToIP;
+my %BoundToPort;
+my %Limits;
+my %lstatFail;
+my %SelfCheck;
+my %SocketFile;
+my %VirusList;
+
+while (defined(my $ThisLine = <STDIN>)) {
+   #If LogTime = yes in clamd.conf then strip it
+   $ThisLine =~ s/^... ... .. ..:..:.. .... \-\> //;
+
+   if (( $ThisLine =~ /^Setting connection queue length to \d+/ ) or
+       ( $ThisLine =~ /^Log file size limited to \d+ bytes\./ ) or
+       ( $ThisLine =~ /^Exiting \(clean\)/ ) or
+       ( $ThisLine =~ /^Self checking every \d+ seconds\./ ) or
+       ( $ThisLine =~ /^Unix socket file/ ) or
+       ( $ThisLine =~ /^Protecting against \d+ viruses\./ ) or
+       ( $ThisLine =~ /^Reading databases from/ ) or
+       ( $ThisLine =~ /^Activating the newly loaded database/ ) or
+       ( $ThisLine =~ /file removed\./ ) or
+       ( $ThisLine =~ / (?:dis|en)abled\.$/ ) or
+       ( $ThisLine =~ /^Archive/ ) or
+       ( $ThisLine =~ /^Running as user/ ) or
+       ( $ThisLine =~ /^Log file size limit/ ) or
+       ( $ThisLine =~ /^Bound to.*port \d*/ ) or
+       ( $ThisLine =~ /^SIGHUP caught: re-opening log file./ ) or
+       ( $ThisLine =~ /^Loaded \d+ signatures/ ) or
+       ( $ThisLine =~ /^Mail: Recursion level limit set to \d+/ ) or
+       ( $ThisLine =~ /clamd shutdown\s+succeeded/ ) or
+       ( $ThisLine =~ /clamd startup\s+succeeded/ ) or
+       ( $ThisLine =~ /Not loading PUA signatures/ ) or
+       ( $ThisLine =~ /^(?:LOCAL|TCP): Setting connection queue length to/ ) or
+       ( $ThisLine =~ /MaxQueue set to: / ) or
+       ( $ThisLine =~ /^(?:LOCAL|TCP): Removing stale socket file/ ) or
+       ( $ThisLine =~ /Listening daemon: PID: / ) or
+       ( $ThisLine =~ /Bytecode: Security mode set to /) or
+       ( $ThisLine =~ /^No stats for Database check/ ) or
+       ( $ThisLine =~ /^Received \d+ file descriptor\(s\) from systemd\.$/) or
+       0 # This line prevents blame shifting as lines are added above
+       ) {
+       # We do not care about these.
+   } elsif (my ($Check) = ($ThisLine =~ /^SelfCheck: (.*?)\.?\s?\n/i)) {
+      $SelfCheck{$Check}++;
+   } elsif (my ($Virus) = ($ThisLine =~ /^.+?: (.*?) FOUND/i )) {
+      $VirusList{$Virus}++;
+   } elsif (my ($Viruses) = ($ThisLine =~ /^Database correctly reloaded \((\d+) (signatures|viruses)\)/i )) {
+      $DatabaseReloads++;
+      $DatabaseViruses = $Viruses;
+   } elsif (($ThisLine =~ /Stopped at/)) {
+      $DaemonStop++;
+   } elsif (($ThisLine =~ /(?:Daemon started|clamd daemon [\d.]{1,10})/)) {
+      $DaemonStart++;
+   } elsif (($ThisLine =~ /\+\+\+ Started at (.*)/)) {
+      $DaemonStartTime = $1;
+   } elsif (($ThisLine =~ /LOCAL: Unix socket file ([^ \n]*)/)) {
+      $SocketFile{$1}++;
+   } elsif (($ThisLine =~ /TCP: Bound to address ([^ ]*) on port (\d+)/)) {
+      $BoundToIP{$1}++;
+      $BoundToPort{$1}=$2;
+   } elsif (($ThisLine =~ /TCP: Bound to \[([^ ]+)\]:(\d+)/)) {
+      $BoundToIP{$1}++;
+      $BoundToPort{$1}=$2;
+   } elsif (my ($Limit,$Value) = ($ThisLine =~ /Limits: (.*) limit (?:set to|is) (.*)\./)) {
+      $Limits{$Limit} = $Value;
+   } elsif (($ThisLine =~ /lstat\(\) failed on: (\S+)/ )) {
+      $lstatFail{$1}++;
+   } else {
+      push @OtherList,$ThisLine;
+   }
+}
+
+if (($DaemonStop) and ($Detail >= 5)) {
+   print "\nDaemon stopped: ". $DaemonStop." Time(s)\n";
+}
+
+if (($DaemonStart) and ($Detail >= 5)) {
+   print "\nDaemon started: ". $DaemonStart." Time(s)";
+   if ($DaemonStartTime ne '') {
+      print " (most recently at $DaemonStartTime)";
+   }
+   print "\n";
+}
+
+if (keys %VirusList) {
+   print "\nViruses detected:\n";
+   foreach my $Virus (sort {$a cmp $b} keys %VirusList) {
+      printf "   %-50s %5i Time(s)\n", $Virus .":", $VirusList{$Virus};
+   }
+}
+
+if ((keys %SelfCheck) and ($Detail >= 5)) {
+   print "\nDaemon check list:\n";
+   foreach my $Check (sort {$a cmp $b} keys %SelfCheck) {
+      printf "   %-50s %5i Time(s)\n", $Check .":", $SelfCheck{$Check};
+   }
+}
+
+if ($DatabaseReloads and ($Detail > 0)) {
+   print "\nVirus database reloaded $DatabaseReloads time(s) (last time with $DatabaseViruses viruses)\n";
+}
+
+if ($Detail > 8) {
+   if (keys %SocketFile) {
+      print "\nBound to Unix socket:\n";
+      foreach my $Socket (keys %SocketFile) {
+         print "\t$Socket\t$SocketFile{$Socket} Time(s)\n";
+      }
+   }
+   if (keys %BoundToIP) {
+      print "\nBound to IP:Port:\n";
+      foreach my $IP (keys %BoundToIP) {
+         print "\t$IP:$BoundToPort{$IP}\t\t\t$BoundToIP{$IP} Time(s)\n";
+      }
+   }
+  
+   if (keys %Limits) {
+      print "\nLimits:\n";
+      foreach my $Limit (sort { $a cmp $b} keys %Limits) {
+         printf "\t%-20s ","$Limit:",;
+         if (my ($Bytes) = ($Limits{$Limit} =~ /(\d+) bytes/)) {
+            printf "%d MiB\n",$Bytes/1024/1024;
+         } else {
+            print "$Limits{$Limit}\n";
+         }
+      }
+   }
+}
+   
+if (keys %lstatFail) {
+   print "\nlstat() failed on:\n";
+   foreach my $file (keys %lstatFail) {
+      printf "   %-50s %5i Time(s)\n", $file .":", $lstatFail{$file};
+   }
+}
+
+if (($#OtherList >= 0) and (not $IgnoreUnmatched)){
+   print "\n**Unmatched Entries**\n";
+   print @OtherList;
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

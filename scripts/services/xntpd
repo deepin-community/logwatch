@@ -1,0 +1,254 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# and copy:
+#    David Baldwin <david.baldwin@anu.edu.au>
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+# This was written and is maintained by:
+#    David Baldwin <david.baldwin@anu.edu.au>
+#
+# Heavily based on sshd script
+#
+# Please send all comments, suggestions, bug reports,
+#    etc, to david.baldwin@anu.edu.au.
+########################################################
+
+#######################################################
+## Copyright (c) 2008 David Baldwin
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+use Logwatch ':all';
+
+my $Debug = $ENV{'LOGWATCH_DEBUG'} || 0;
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+
+my $DebugCounter = 0;
+my $Starts = 0;
+my $Kills = 0;
+my $SyncLost = 0;
+my (@TimeReset,%Interfaces,%Syncs,%TwoInst,%Errors,%OtherList);
+my %ConfErrs;
+my %Operations;
+
+# No sense in running if 'xntpd' doesn't even exist on this system...
+unless (( -f "/usr/sbin/ntpd" ) or ( -f "/usr/local/sbin/ntpd") or ( -f "/usr/lib/inet/xntpd") or ( -f "/usr/lib/inet/ntpd" ) ) {
+   if ( $Debug >= 5 ) {
+      print STDERR "\n\nDEBUG: Exiting XNTPD Filter - no ntpd binary on system\n\n";
+   }
+   exit (0);
+}
+
+if ( $Debug >= 5 ) {
+         print STDERR "\n\nDEBUG: Inside XNTPD Filter \n\n";
+         $DebugCounter = 1;
+}
+
+
+while (defined(my $ThisLine = <STDIN>)) {
+    if ( $Debug >= 5 ) {
+       print STDERR "DEBUG($DebugCounter): $ThisLine";
+       $DebugCounter++;
+    }
+    chomp($ThisLine);
+    if (
+        ($ThisLine =~ m/tickadj = /) or # startup
+        ($ThisLine =~ m/precision = /) or # startup
+        ($ThisLine =~ m/ (succeeded|failed)/) or # startup
+        ($ThisLine =~ m/failed to init interface/) or # startup
+        ($ThisLine =~ m/sendto\(\S+\): Success/) or # startup
+        ($ThisLine =~ m/kernel time (discipline|sync) status/) or # startup
+        ($ThisLine =~ m/kernel time sync (dis|en)abled /) or # startup
+        ($ThisLine =~ m/frequency initialized/) or # startup
+        ($ThisLine =~ m/using kernel phase-lock loop/) or # startup
+        ($ThisLine =~ m/0\.0\.0\.0 [[:xdigit:]]{4} [[:xdigit:]]{2} /) or # startup
+        ($ThisLine =~ m/Soliciting .*server/) or # startup
+        ($ThisLine =~ m/kernel reports .*: Clock Unsynchronized/) or # startup
+        ($ThisLine =~ m/select([^\)]) error: Interrupted system call/) or
+        ($ThisLine =~ m/signal_no_reset: signal \d+ had flags \d+/) or
+        ($ThisLine =~ /Deleting interface \#[0-9]+ [^,]*, [^,]*, interface stats: received=.*, sent=.*, dropped=.*, active_time=.* secs/) or
+        ($ThisLine =~ /Invalid argument/) or
+        ($ThisLine =~ /Listening on interface .* Disabled/) or
+        ($ThisLine =~ /Listen and drop on /) or
+        ($ThisLine =~ /Listening on routing socket on/) or
+        ($ThisLine =~ /.* interface .* -> .*/) or
+        ($ThisLine =~ /.* local addr .* -> .*/) or
+        ($ThisLine =~ /Deferring DNS for/) or
+        ($ThisLine =~ /ntp_io: estimated max descriptors: \d*, initial socket boundary: \d*/) or
+        ($ThisLine =~ /peers refreshed$/) or
+        ($ThisLine =~ /restrict: error in address/) or
+        ($ThisLine =~ /syntax error in .+ line \d+, column \d+$/) or
+        #($ThisLine =~ /Listen normally on /) or
+        ($ThisLine =~ /the NTP socket is in use, exiting/) or
+        ($ThisLine =~ /Command line:/) or
+        0 # This line prevents blame shifting as lines are added above
+    ) {
+       # Ignore these
+    } elsif ($ThisLine =~ m/ntpd [\d\-\.\w@]+ ... ... .. ..:..:.. /) {
+      $Starts++;
+    } elsif ($ThisLine =~ m/ntpd exiting on signal/) {
+      $Kills++;
+    } elsif ($ThisLine =~ m/synchronisation lost/) {
+      $SyncLost++;
+    } elsif ( my (undef,$TimeStep) = ($ThisLine =~ /time reset(| \(step\)) ([^ ]+) s$/ )) {
+       push @TimeReset, $TimeStep;
+    } elsif ( my (undef,$TimeStep) = ($ThisLine =~ /(step|adjust) time server [^ ]+ offset ([^ ]+) sec$/ )) {
+       push @TimeReset, $TimeStep;
+    } elsif ( my ($TimeStep) = ($ThisLine =~ /adjusting local clock by ([^ ]+)s$/ )) {
+       # Jacob Joseph (12/8/06)
+       push @TimeReset, $TimeStep;
+    # MEv start no leadin to line
+    } elsif ( my (undef,$TimeStep) = ($ThisLine =~ /(offset) ([^ ]+) sec/ )) {
+       push @TimeReset, $TimeStep;
+    # MEv end no leadin to line
+    } elsif ( my ($ListenOn) = ($ThisLine =~ /Listening on interface(?: #\d+)? (.*)(?: Enabled)?/ )) {
+       $Interfaces{$ListenOn}++;
+    } elsif ( my ($ListenOn) = ($ThisLine =~ /Listen normally on \d+ (.*)/ )) {
+       $Interfaces{$ListenOn}++;
+    } elsif ( my ($SyncTo,$Stratum) = ($ThisLine =~ /synchronized to ([^ ]+), stratum[ =]([^ ]+)/ )) {
+       my $name = $SyncTo;
+       if ($Detail > 5 && $SyncTo =~ m/^[\d.]+$/) {
+           $name = LookupIP($SyncTo);
+       }
+       $name .= " stratum " . $Stratum;
+       $Syncs{$name}++;
+    } elsif ( my ($Host) = ($ThisLine =~ /two instances of default interface for ([^ ]+) in hash table$/ )) {
+       if ($Debug >= 5) {
+          print STDERR "DEBUG: Found -$1 two instances of default interface\n";
+       }
+       my $name = LookupIP($Host);
+       $TwoInst{$name}++;
+    } elsif ( my ($Error) = ($ThisLine =~ /(unable to create .*)/ )) {
+       $Errors{$Error}++;
+    } elsif ( my ($Error) = ($ThisLine =~ /(no server(s reachable| suitable for synchronization found))/ )) {
+       $Errors{$Error}++;
+    } elsif ( my ($Error) = ($ThisLine =~ /([Cc]an't find host \S+|no servers can be used, exiting)/ )) {
+       $Errors{$Error}++;
+    } elsif ( my ($Error) = ($ThisLine =~ /(sendto\(\S+\): Network is unreachable)/ )) {
+       $Errors{$Error}++;
+    } elsif ( my ($Error) = ($ThisLine =~ /(getaddrinfo: "\S+" invalid host address, ignored)/ )) {
+       $Errors{$Error}++;
+    } elsif ( my ($Error) = ($ThisLine =~ /(error resolving .*)/ )) {
+       $Errors{$Error}++;
+    } elsif ( my ($Error) = ($ThisLine =~ /(frequency error \d+ PPM exceeds tolerance \d+ PPM)/ )) {
+       $Errors{$Error}++;
+    } elsif ( my ($ConfErr) = ($ThisLine =~ /configure: (keyword "[^"]*" unknown, line ignored)/ )) {
+       $ConfErrs{$ConfErr}++;
+    } elsif ( my ($ConfErr) = ($ThisLine =~ /line \d+ column \d+ syntax error, (.+)$/ )) {
+       $ConfErrs{$ConfErr}++;
+    } elsif ( my ($StepTime) = ($ThisLine =~ /(.*:) Operation not permitted/) ) {
+       $Operations{$StepTime}++
+    } else {
+       # Report any unmatched entries...
+       $OtherList{$ThisLine} += 1;
+    }
+}
+
+###########################################################
+
+if ($Kills) {
+    print "\nXNTPD Killed: " . $Kills . " Time(s)\n";
+}
+if ($Starts) {
+    print "\nXNTPD Started: " . $Starts . " Time(s)\n";
+}
+if ($SyncLost) {
+    print "\nSync lost: " . $SyncLost . " Time(s)\n";
+}
+
+if (@TimeReset > 0) {
+    if ($Detail > 5) {
+       print "\nTime Reset\n";
+       print map "  time stepped $_\n",@TimeReset;
+    }
+    my $t = 0;
+    $t += $_ foreach @TimeReset;
+    printf "\nTime Reset ".(@TimeReset)." times (total: %.6f s  average: %.6f s)\n", $t, $t/(@TimeReset);
+}
+
+if (keys %Interfaces) {
+    my $t = 0;
+    my $lt = 0;
+    print "\nListening on interfaces:\n" if ($Detail > 5);
+    foreach my $i (keys %Interfaces) {
+       print "  $i - $Interfaces{$i} times\n" if ($Detail > 5);
+       unless ($i =~ m/^(wildcard|v[46]wildcard|lo)/) {
+          $lt++;
+       }
+       $t++;
+    }
+    print "\nTotal interfaces: $t (non-local: $lt)\n";
+}
+
+if (keys %Syncs) {
+    my $t = 0;
+    my $ht = 0;
+    print "\nSynchronized to:\n" if ($Detail > 5);
+    foreach my $h (keys %Syncs) {
+       $ht++;
+       $t += $Syncs{$h};
+       print "  $h - $Syncs{$h} times\n" if ($Detail > 5);
+    }
+    print "\nTotal synchronizations $t (hosts: $ht)\n";
+}
+
+if (keys %TwoInst) {
+    print "\nTwo instances error\n";
+    foreach my $h (keys %TwoInst) {
+      print "  $h - $TwoInst{$h} times\n";
+    }
+}
+
+if (keys %Errors) {
+    print "\nErrors\n";
+    print "  $_: $Errors{$_} time(s)\n" foreach sort keys %Errors;
+}
+
+if (keys %ConfErrs) {
+    print "\nErrors in configuration file:\n";
+    foreach my $k (keys %ConfErrs) {
+      print "  $k ". $ConfErrs{$k} . " time(s)\n";
+    }
+}
+
+if (keys %Operations) {
+    print "\nOperations not permitted\n";
+    foreach my $o (keys %Operations) {
+      print "  $o ". $Operations{$o} . " time(s)\n";
+    }
+    print "\n  The clock on a VPS is inherited from the clock on the\n";
+    print "  hardware node, therefore the ntp-service must be run on\n";
+    print "  the hardware node, and not the VPS.\n";
+}
+
+if (keys %OtherList) {
+    print "\n**Unmatched Entries**\n";
+    print "  $_: $OtherList{$_} time(s)\n" foreach keys %OtherList;
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

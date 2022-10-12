@@ -1,0 +1,347 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2008 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Ignore_messages = $ENV{'ignore_messages'} || '^$';
+
+my %Errors;
+my %RestartRequired;
+my %Systems;
+my %Updates;
+my %UpdatesInstalled;
+my %UpdatesReadyForInstall;
+
+while (defined(my $ThisLine = <STDIN>)) {
+   # User specified ignore messages, lower cased
+   next if $ThisLine =~ /$Ignore_messages/i;
+
+   my ($Hostname,$Criticality,$SourceName,$DateTime,$EventID,$System,$UserName,$SIDType,$EventLogType,$CategoryString,$DataString,$ExpandedString,$Extra);
+   #Determine format
+   if ($ThisLine =~ /MSWinEventLog\[/) {  # Snare 4
+      #Parse
+      ($Criticality,$SourceName,$DateTime,$EventID,$System,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra) =
+         ($ThisLine =~ /MSWinEventLog\[(\d+)\]:(\w+)\t\d+\t([^\t]+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)/);
+   } elsif ($ThisLine =~ /MSWinEventLog\t/) { # Snare 3
+      #Parse
+      ($Criticality,$SourceName,$DateTime,$EventID,$System,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra) =
+         ($ThisLine =~ /MSWinEventLog\t(\d+)\t(\w+)\t\d+\t([^\t]+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)/);
+   }
+   if (!defined($Hostname)) {
+      print STDERR "Cannot parse $ThisLine";
+      next;
+   }
+   #print STDERR "ExpandedString = $ExpandedString\n";
+
+   next if ($EventLogType eq "Verbose");
+   next if ($EventLogType eq "Information" and $Detail < 10);
+
+   # Modify some items that prevent de-duplication
+   if ($Detail < 10) {
+      $ExpandedString =~ s/\d+ time\(s\)/XX times(s)/;
+      $ExpandedString =~ s/requested by PID\s+\S+\s+//;
+      $ExpandedString =~ s/processor \d+/processor X/;
+      $ExpandedString =~ s/for \d+ seconds/for XX seconds/;
+      $ExpandedString =~ s/(APPID|CLSID)\s+\{[0-9A-F\-]+\}/$1 {XXX}/g;
+   }
+
+   if ($System eq "Application Popup") {
+      #Ignore these
+      next if $ExpandedString =~ /Initialization Failed : The application failed to initialize because the window station is shutting down/;
+      next if $ExpandedString =~ /^Application popup: Windows : Other people are logged on to this computer. Shutting down Windows might cause them to lose data\.    Do you want to continue shutting down\?$/;
+      next if $ExpandedString =~ /^Application popup: Message from .*: Automatic software deployment is currently updating your system\. Please save all your documents as the the system might reboot without further notice\. Thank you\./;
+      next if $ExpandedString =~ /^Application popup: Message from .*: The automated software installation utility has completed installing or updating software on your system\. No reboot was necessary\. All updates are complete\./;
+   }
+
+   if ($System eq "BTHUSB") {
+      next if $ExpandedString =~ /^Windows cannot store Bluetooth authentication codes \(link keys\) on the local adapter\. Bluetooth keyboards might not work in the system BIOS during startup\.$/ and $Detail < 5;
+   }
+
+   if ($System =~ "EventLog") {
+      #Ignore these
+      next if $ExpandedString =~ /Microsoft \(R\) Windows \(R\) \d+\.\d+\. \d+ +(Multiprocessor Free|Service Pack \d)/;
+      next if $ExpandedString =~ /^The Event log service was started./;
+      next if $ExpandedString =~ /^The Event log service was stopped./;
+      next if $ExpandedString =~ /^The system uptime is \d+ seconds/;
+   }
+
+   if ($System =~ "LsaSrv") {
+      #Ignore these
+      next if $ExpandedString =~ /^A logon cache entry for user .* was the oldest entry and was removed\. The timestamp of this entry was/;
+   }
+
+   if ($System eq "Microsoft-Windows-Application-Experience") {
+      #Ignore these
+      next if $ExpandedString eq "The Program Compatibility Assistant service successfully performed phase two initialization.";
+   }
+
+   if ($System eq "Microsoft-Windows-DfsSvc") {
+      #Ignore these
+      next if $ExpandedString =~ /^DFS has finished building all namespaces\.$/;
+      next if $ExpandedString =~ /^DFS server has finished initializing\.$/;
+   }
+
+   if ($System eq "Microsoft-Windows-DNS-Client") {
+      next if $ExpandedString =~ /^Name resolution for the name .* timed out/;
+      next if $ExpandedString =~ /^The system failed to (?:register|update and remove) host .* resource records/;
+      next if $ExpandedString =~ /^The system could not remove these host .* RRs/;
+   }
+
+   if ($System eq "Microsoft-Windows-FilterManager") {
+      #Ignore these
+      next if $ExpandedString =~ /^File System Filter .* has successfully loaded and registered with Filter Manager\.$/;
+   }
+
+   if ($System eq "Microsoft-Windows-Iphlpsvc") {
+      #High Detail
+      next if $ExpandedString =~ /^Isatap interface .* with address .* has been brought up\.$/ and $Detail < 10;
+      next if $ExpandedString =~ /^Isatap interface .* is no longer active\.$/ and $Detail < 10;
+   }
+
+   if ($System eq "Microsoft-Windows-Kernel-Boot") {
+      #High Detail
+      next if $ExpandedString =~ /^The boot type was/ and $Detail < 10;
+      next if $ExpandedString =~ /^The bootmgr spent .* waiting for user input/ and $Detail < 10;
+      next if $ExpandedString =~ /^The last shutdown's success status was true. The last boot's success status was true\.$/ and $Detail < 10;
+      next if $ExpandedString =~ /^There are .* boot options on this system/ and $Detail < 10;
+   }
+
+   if ($System eq "Microsoft-Windows-Kernel-General") {
+      #High Detail
+      next if $ExpandedString =~ /^The operating system started at system time/ and $Detail < 10;
+      next if $ExpandedString =~ /^The operating system is shutting down at system time/ and $Detail < 10;
+      next if $ExpandedString =~ /^The access history in hive .* was cleared updating \d+ keys/ and $Detail < 10;
+      #TODO - We should warn is this is big
+      next if $ExpandedString =~ /^The system time has changed to .* from/;
+   }
+
+   if ($System eq "Microsoft-Windows-Kernel-Power") {
+      #High Detail
+      next if $ExpandedString =~ /^The system is entering sleep/ and $Detail < 10;
+      next if $ExpandedString =~ /^The kernel power manager has initiated a shutdown transition\.$/ and $Detail < 10;
+
+      #Ignore these
+      next if $ExpandedString =~ /^ACPI thermal zone .* has been enumerated/;
+      next if $ExpandedString =~ /^Processor \d+ in group \d+ exposes the following power management capabilities/;
+   }
+
+   if ($System eq "Microsoft-Windows-Kernel-Processor-Power") {
+      #Ignore these
+      next if $ExpandedString =~ /^Processor \d+ in group \d+ exposes the following/;
+   }
+
+   if ($System eq "Microsoft-Windows-GroupPolicy") {
+      #Ignore these
+      next if $ExpandedString =~ /^The Group Policy settings for the (computer|user) were processed successfully\. There were no changes detected since the last successful processing of Group Policy\.$/;
+      next if $ExpandedString =~ /^The Group Policy settings for the (computer|user) were processed successfully\. New settings from \d+ Group Policy objects were detected and applied\.$/ and $Detail == 0;
+   }
+
+   if ($System eq "Microsoft-Windows-Ntfs") {
+      #Ignore these
+      next if $ExpandedString =~ /^Volume .* is healthy\.  No action is needed\.$/;
+   }
+
+   if ($System eq "Microsoft-Windows-Power-Troubleshooter") {
+      #High Detail
+      next if $ExpandedString =~ /^The system has resumed from sleep/ and $Detail < 10;
+   }
+
+   if ($System eq "Microsoft-Windows-Time-Service") {
+      #High Detail
+      next if $ExpandedString =~ /^The time provider NtpClient is currently receiving valid time data from/ and $Detail < 10;
+      next if $ExpandedString =~ /^The time service is now synchronizing the system time with the time source/ and $Detail < 10;
+   }
+
+   if ($System eq "Microsoft-Windows-WAS") {
+      #High Detail
+      next if $ExpandedString =~ /^A worker process with process id of .* serving application pool .* has requested a recycle because the worker process reached its allowed processing time limit/ and $Detail < 10;
+   }
+
+   if ($System eq "Microsoft-Windows-WindowsUpdateClient" or
+       $System eq "Windows Update Agent") {
+      #High Detail
+      next if $ExpandedString =~ /^Automatic Updates is now paused\.$/ and $Detail < 10;
+      next if $ExpandedString =~ /^Windows Update started downloading an update\.$/ and $Detail < 10;
+      
+      #Updates
+      if (my ($InstallDateTime, $Updates) = $ExpandedString =~ /^Installation Ready: The following updates are downloaded and ready for installation(?:\. )?(?:This computer is currently scheduled to install these updates on (.*)|To install the updates, an administrator should log on.*|):  - (.*)$/) {
+          $InstallDateTime =~ s/\?//g;
+          foreach my $Update (split(" - ",$Updates)) {
+              $InstallDateTime = "Now" if $InstallDateTime eq "";
+              $UpdatesReadyForInstall{$Hostname}->{$Update} = $InstallDateTime;
+          }
+          next;
+      }
+      if (my ($Update) = $ExpandedString =~ /^Installation Successful: Windows successfully installed the following update: (.*)$/) {
+          delete($UpdatesReadyForInstall{$Hostname}->{$Update});
+          push(@{$UpdatesInstalled{$Hostname}},$Update);
+          next;
+      }
+      if ($ExpandedString =~ /^Installation Failure:/) {
+          $Errors{$System}->{"$Hostname $ExpandedString"}++;
+          next;
+      }
+      if ($ExpandedString =~ /^Installation Started:/) {
+          next;
+      }
+      if ($ExpandedString =~ /^Restart Required:/) {
+          $RestartRequired{$Hostname} = 1;
+          next;
+      }
+   }
+
+   if ($System eq "Microsoft-Windows-WHEA-Logger") {
+      $Errors{$System}->{"$Hostname $ExpandedString"}++;
+      next;
+   }
+
+   if ($System eq "Microsoft-Windows-Winlogon") {
+      #High Detail
+      next if $ExpandedString =~ /User \w+ Notification for Customer Experience Improvement Program/ and $Detail < 10;
+   }
+
+   if ($System eq "Microsoft-Windows-WinRM") {
+      #High Detail
+      next if $ExpandedString =~ /^The WinRM service is listening for WS-Management requests/ and $Detail < 10;
+   }
+
+   if ($System eq "NPS") {
+      #High Detail
+      next if $ExpandedString =~ /^A LDAP connection with domain controller .* for domain .* is established/ and $Detail < 10;
+   }
+
+   if ($System eq "Service Control Manager") {
+      #Ignore these
+      next if $ExpandedString =~ /^The (.*) service entered the running state\./;
+      next if $ExpandedString =~ /^The (.*) service entered the stopped state\./;
+      next if $ExpandedString =~ /^The (.*) service was successfully sent a start control\./;
+      next if $ExpandedString =~ /^The (.*) service was successfully sent a stop control\./;
+   }
+
+   if ($System eq "USER32") {
+      #High Detail
+      next if $ExpandedString =~ /^The process .* has initiated the power off of computer \w+ on behalf of user .* for the following reason: .*$/ and $Detail < 10;
+   }
+
+   if ($System eq "Virtual Disk Service") {
+      #High Detail
+      next if $ExpandedString =~ /Service (started|stopped)/ and $Detail < 10;
+   }
+
+   if ($System eq "atikmdag") {
+      #Ignore these
+      next if $ExpandedString =~ /^UVD Information$/;
+      #High Detail
+      next if $ExpandedString =~ /^Display is not active$/ and $Detail < 10;
+   }
+
+   if ($System eq "volsnap") {
+      #Med Detail
+      next if $ExpandedString =~ /^The oldest shadow copy of volume .* was deleted to keep disk space usage for shadow copies of volume .* below the user defined limit\.$/ and $Detail < 5;
+   }
+
+   next if $ExpandedString =~ /client service is started$/ and $Detail < 10;
+   next if $ExpandedString =~ /started successfully\.$/ and $Detail < 10;
+   next if $ExpandedString =~ /has successfully (?:started|stopped)\./ and $Detail < 10;
+   next if $ExpandedString =~ /service .* (?:started|stopped)/i and $Detail < 10;
+   next if $ExpandedString =~ /Module has (?:started|stopped)/ and $Detail < 10;
+   next if $ExpandedString =~ /Driver initialized successfully\.$/ and $Detail < 10;
+   next if $ExpandedString =~ /Network controller configured for .* link\.$/ and $Detail < 10;
+   next if $ExpandedString =~ /Network link has been established/ and $Detail < 10;
+   next if $ExpandedString =~ /^The driver package installation has succeeded\.$/ and $Detail < 10;
+   next if $ExpandedString =~ /^The .* service entered the .* state/ and $Detail < 10;
+   next if $ExpandedString =~ /^The process .* has initiated the (?:power off|restart|shutdown) of computer .* on behalf of user .* for the following reason/ and $Detail < 5;
+   next if $ExpandedString =~ /^UVD Information$/;
+   next if $ExpandedString =~ /Link has been established:/;
+
+   # Add to the list
+   $Systems{$System}->{"$Hostname $ExpandedString"}++;
+}
+
+# Handle high priority errors first
+my $System = "Microsoft-Windows-WER-SystemErrorReporting";
+if (defined($Systems{$System})) {
+   print "\nSYSTEM ERRORS!:\n";
+   foreach my $Error (sort(keys %{$Systems{$System}})) {
+      print "    $Error : $Systems{$System}->{$Error} Times\n";
+   }
+   delete($Systems{$System});
+}
+print "\n";
+
+# Next output items marked as errors
+if (keys %Errors) {
+   print "\nERRORS:";
+   foreach my $System (sort(keys %Errors)) {
+      print "\n    $System\n";
+      foreach my $Error (sort(keys %{$Errors{$System}})) {
+         print "        $Error : $Errors{$System}->{$Error} Times\n";
+      }
+   }
+}
+
+if (keys %Systems) {
+   foreach my $System (sort(keys %Systems)) {
+      print "\n$System\n";
+      foreach my $Error (sort(keys %{$Systems{$System}})) {
+         print "    $Error : $Systems{$System}->{$Error} Times\n";
+      }
+   }
+}
+
+if (keys %UpdatesReadyForInstall or keys %UpdatesInstalled) {
+   print "\nWindows Update Summary:\n";
+   foreach my $Hostname (sort(keys %UpdatesReadyForInstall)) {
+      # We may have removed all updates from this list when installed
+      if (keys %{$UpdatesReadyForInstall{$Hostname}}) {
+         print "    Updates ready for install on $Hostname:\n"; 
+         foreach my $Update (sort(keys %{$UpdatesReadyForInstall{$Hostname}})) {
+            print "        $Update at $UpdatesReadyForInstall{$Hostname}->{$Update}\n";
+         }
+      }
+   }
+   print "\n" if keys %UpdatesReadyForInstall;
+   foreach my $Hostname (sort(keys %UpdatesInstalled)) {
+      print "    Updates successfully installed on $Hostname:\n";
+      foreach my $Update (@{$UpdatesInstalled{$Hostname}}) {
+          print "        $Update\n";
+      }
+   }
+   print "\n    Restart required on hosts: " if keys %RestartRequired;
+   foreach my $Hostname (sort(keys %RestartRequired)) {
+      print "$Hostname ";
+   }
+   print "\n";
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

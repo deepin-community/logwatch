@@ -1,0 +1,115 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2008 Kirk Bauer
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $IgnoreUnmatched = $ENV{'afpd_ignore_unmatched'} || 0;
+
+my $ThisLine;
+my $Starts;
+my $Stops;
+my $TotalRead;
+my $TotalWritten;
+my %UserLogin;
+my %OtherList;
+
+while (defined($ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+   if ( ( $ThisLine =~ /^FTP session closed./ ) or
+         ( $ThisLine =~ /^(ANONYMOUS )?FTP login as \'.*\' from [^ ]+ \[.*\] to .*/ ) or
+         ( $ThisLine =~ /^FTP no transfer time out, disconnected\./ ) or
+         ( $ThisLine =~ /^PAM\(.*\): Authentication failure/ ) or
+         ( $ThisLine =~ /^data_sendfile/ ) or
+         ( $ThisLine =~ /^FTP no transfer timeout, disconnected\./ ) or
+         ( $ThisLine =~ /^FTP login timed out, disconnected\./ ) or
+         ( $ThisLine =~ /done/ ) or
+         ( $ThisLine =~ /server_child/ ) or
+         ( $ThisLine =~ /session from/ ) or
+         ( $ThisLine =~ /ASIP session/ ) or
+         ( $ThisLine =~ /^afp_zzz: (entering|waking up from) (normal|extended) sleep/ ) or
+         ( $ThisLine =~ /^afp_disconnect: trying primary reconnect/ ) or
+         ( $ThisLine =~ /^afp_disconnect: primary reconnect succeeded/ ) or
+         ( $ThisLine =~ /^Netatalk AFP\/TCP listening on /) or
+         ( $ThisLine =~ /^Reconnect: transfering session to child/ ) or
+         ( $ThisLine =~ /^Reconnect: killing new session child.* after transfer/ ) or
+         ( $ThisLine =~ /^afp_dsi_transfer_session: successfull primary reconnect/ ) or
+         ( $ThisLine =~ /^AFP Replay Cache match: id: .* \/ cmd: AFP_FLUSHFORK/ ) or
+         ( $ThisLine =~ /^afp_over_dsi: client logged out, terminating DSI session/ ) or
+         ( $ThisLine =~ /logout/ )
+      ) {
+      # We don't care about these
+   }
+   elsif ( my ($Junk,$Login) = ( $ThisLine =~ /(login|Login by) ([^ ]+)/) ) {
+      chomp($Login);
+      $UserLogin{$Login}++;
+   }
+   elsif ( $ThisLine =~ /started/ ) {
+      $Starts++;
+   }
+   elsif ( $ThisLine =~ /shutting down/ ) {
+      $Stops++;
+   }
+   elsif ( my ($Read,$Write) = ( $ThisLine =~ /statistics: (\d+\.\d+) KB read, (\d+\.\d+) KB/) ) {
+      $TotalRead+=$Read;
+      $TotalWritten+=$Write;
+   }
+   else {
+      # Report any unmatched entries...
+      $OtherList{$ThisLine} += 1;
+   }
+}
+
+if (keys %UserLogin and $Detail) {
+   print "\nUsers Logged In:\n";
+   foreach my $Line (keys %UserLogin) {
+      print "   $Line : $UserLogin{$Line} Time(s)\n";
+   }
+}
+
+if ($Starts and $Detail) {
+   print "\nNumber of server startups: $Starts\n";
+}
+
+if ($Stops and $Detail) {
+   print "\nNumber of server shutdowns: $Stops\n";
+}
+
+if (($TotalRead or $TotalWritten) and $Detail >= 5) {
+   print "\nTransfer Statistics: $TotalRead KB read, $TotalWritten KB written\n";
+}
+
+if ((keys %OtherList) and (not $IgnoreUnmatched)) {
+   print "\n**Unmatched Entries**\n";
+   print "  $_: $OtherList{$_} time(s)\n" foreach keys %OtherList;
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

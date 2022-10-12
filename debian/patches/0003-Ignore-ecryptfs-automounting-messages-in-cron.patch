@@ -1,0 +1,23 @@
+From: Willi Mann <willi@debian.org>
+Date: Tue, 2 Oct 2018 09:50:35 +0200
+Subject: Ignore ecryptfs automounting messages in cron
+
+Bug-Debian: https://bugs.debian.org/862337
+---
+ scripts/services/cron | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/scripts/services/cron b/scripts/services/cron
+index 45b857f..c85d077 100644
+--- a/scripts/services/cron
++++ b/scripts/services/cron
+@@ -50,7 +50,8 @@ while (defined($ThisLine = <STDIN>)) {
+       ($ThisLine =~ /void Inotify::Remove\(InotifyWatch\*\): removing watch failed/) or
+       ($ThisLine =~ /error: \(22\) Invalid argument/) or
+       ($ThisLine =~ /pam_unix\(crond:session\): session (?:opened|closed) for user/) or
+-      ($ThisLine =~ /PAM pam_end: NULL pam handle passed/)
++      ($ThisLine =~ /PAM pam_end: NULL pam handle passed/) or
++      ($ThisLine =~ /Signature not found in user keyring|Perhaps try the interactive/)
+    ) {
+       # Ignore
+    } elsif (

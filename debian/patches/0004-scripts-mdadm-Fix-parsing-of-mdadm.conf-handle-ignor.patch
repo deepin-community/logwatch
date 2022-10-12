@@ -1,0 +1,27 @@
+From: Willi Mann <willi@debian.org>
+Date: Tue, 2 Oct 2018 10:36:31 +0200
+Subject: scripts/mdadm: Fix parsing of mdadm.conf, handle "<ignore>"
+
+Bug-Debian: https://bugs.debian.org/907319
+---
+ scripts/services/mdadm | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/scripts/services/mdadm b/scripts/services/mdadm
+index d4a348c..6ac5cfc 100644
+--- a/scripts/services/mdadm
++++ b/scripts/services/mdadm
+@@ -38,8 +38,11 @@ if ( -f "/etc/mdadm.conf" ) {
+   open(MDADM,"mdadm --detail --scan 2>/dev/null|");
+ }
+ while (<MDADM>) {
+-  if (/^ARRAY/) {
+-    push(@devices,(split())[1]);
++  if (/^ARRAY\s/) {
++    my $dev = (split())[1];
++    unless($dev =~ /^<ignore>$/i) {
++      push(@devices, $dev);
++    }
+   }
+ }
+ close(MDADM);

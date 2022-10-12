@@ -1,0 +1,56 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+##########################################################################
+# Copyright (c) 2013 gulikoza 
+# Covered under the included MIT/X-Consortium License:
+#    http://www.opensource.org/licenses/mit-license.php
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included
+# in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+# OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+###########################################################################
+#Main
+
+#Exit early if the report is not for the current host.
+use POSIX qw(uname);
+my $logwatch_hostname = $ENV{'LOGWATCH_ONLY_HOSTNAME'};
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my ($OSname, $hostname, $release, $version, $machine) = POSIX::uname(); 
+$hostname =~ s/\..*//;
+exit (0) if ($ENV{'LOGWATCH_ONLY_HOSTNAME'} and ($logwatch_hostname ne $hostname));
+
+#Output sensors stats
+
+my $pathto_sensors = $ENV{'pathto_sensors'} || '/usr/bin/sensors';
+my $get_kvm_status = $ENV{'get_kvm_status'} || 'grep -c "QEMU Virtual CPU" /proc/cpuinfo';
+
+my $kvm     = qx($get_kvm_status);
+
+if ($kvm == 0 and (($ENV{PRINTING} eq 'y') or $Detail)) {
+   my $sensors = qx($pathto_sensors);
+   if ($sensors) {
+      print $sensors;
+   }
+}
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et

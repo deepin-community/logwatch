@@ -1,0 +1,126 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#####################################################
+## Copyright (c) 2012 Pat Riehecky
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $enable_scan = $ENV{'mdadm_enable_scan'} || 0;
+my $ignore_missing = $ENV{'mdadm_ignore_missing'} || 0;
+
+my @devices = ();
+if ( -f "/etc/mdadm.conf" ) {
+  open(MDADM,"< /etc/mdadm.conf");
+} elsif ( -f "/etc/mdadm/mdadm.conf" ) {
+  open(MDADM,"< /etc/mdadm/mdadm.conf");
+} elsif ($enable_scan) {
+  open(MDADM,"mdadm --detail --scan 2>/dev/null|");
+}
+while (<MDADM>) {
+  if (/^ARRAY/) {
+    push(@devices,(split())[1]);
+  }
+}
+close(MDADM);
+
+DEV: foreach my $dev (@devices) {
+  my %mdhash;
+
+  if ($dev =~ /<ignore>/) {
+    next;
+  }
+
+  open(MDADM,"mdadm --misc --detail $dev 2>&1 |");
+  while (<MDADM>) {
+    if ($_ =~ /cannot open .*: No such file or directory/) {
+      print $_ unless $ignore_missing;
+      close(MDADM);
+      next DEV;
+    }
+
+    $mdhash{'level'} = $1 if ($_ =~ /Raid Level ?: ?(.*)$/);
+    $mdhash{'active'} = $1 if ($_ =~ /Active Devices ?: ?(.*)$/);
+    $mdhash{'working'} = $1 if ($_ =~ /Working Devices ?: ?(.*)$/);
+    $mdhash{'failed'} = $1 if ($_ =~ /Failed Devices ?: ?(.*)$/);
+    $mdhash{'spare'} = $1 if ($_ =~ /Spare Devices ?: ?(.*)$/);
+    $mdhash{'state'} = $1 if ($_ =~ /State ?: ?(.*)$/);
+    $mdhash{'rebuild'} = $1 if ($_ =~ /Rebuild Status ?: ?(.*)$/);
+    push(@{$mdhash{'good devices'}},$1) if ($_ =~ /sync .*(\/dev\/[\w\d\-\_]*)/);
+    push(@{$mdhash{'middle devices'}},$1) if ($_ =~ /rebuilding .*(\/dev\/[\w\d\-\_]*)/);
+    push(@{$mdhash{'bad devices'}},$1) if ($_ =~ /faulty .*(\/dev\/[\w\d\-\_]*)/);
+  }
+  close(MDADM);
+
+  if ($Detail <= 4) {
+    if (lc($mdhash{'state'}) =~ /clean|active/) {
+      print "$dev : $mdhash{'state'}\n" if $Detail;
+    } else {
+      print "$dev : $mdhash{'state'}\n";
+      if (defined($mdhash{'middle devices'})) {
+        if (defined($mdhash{'rebuild'}) and ($mdhash{'rebuild'} ne '')) {
+          print "\tRebuilding status: $mdhash{'rebuild'}\n";
+        }
+        print "\tRebuilding @{$mdhash{'middle devices'}}\n";
+      }
+      if (defined($mdhash{'bad devices'})) {
+        print "\tFailed @{$mdhash{'bad devices'}}\n";
+      }
+    }
+  }
+  elsif($Detail <= 9) {
+    if (lc($mdhash{'state'}) =~ /clean|active/) {
+      print "$dev : $mdhash{'state'} - @{$mdhash{'good devices'}}\n";
+    } else {
+      print "$dev : $mdhash{'state'}\n";
+      if (@{$mdhash{'middle devices'}}) {
+        if (defined($mdhash{'rebuild'}) and ($mdhash{'rebuild'} ne '')) {
+          print "\tRebuilding status: $mdhash{'rebuild'}\n";
+        }
+        print "\t  Rebuilding : @{$mdhash{'middle devices'}}\n";
+      }
+      if (@{$mdhash{'bad devices'}}) {
+        print "\t      Failed : @{$mdhash{'bad devices'}}\n";
+      }
+      print "\t        Good : @{$mdhash{'good devices'}}\n";
+    }
+  } else {
+    print "$dev : $mdhash{'state'}\n";
+    print "\t  Raid Level : $mdhash{'level'}\n";
+    print "\tGood Devices : @{$mdhash{'good devices'}}\n";
+    if (defined ($mdhash{'middle devices'}) and @{$mdhash{'middle devices'}}) {
+      if (defined($mdhash{'rebuild'}) and ($mdhash{'rebuild'} ne '')) {
+        print "\tRebuilding status: $mdhash{'rebuild'}\n";
+      }
+      print "\t  Rebuilding : @{$mdhash{'middle devices'}}\n";
+    }
+    if (defined($mdhash{'bad devices'}) and @{$mdhash{'bad devices'}}) {
+      print "\t      Failed : @{$mdhash{'bad devices'}}\n";
+    }
+    if ($mdhash{'spare'} ne 0) {
+      print "\t      Spares : $mdhash{'spare'}\n";
+    }
+    print "\n";
+  }
+}
+

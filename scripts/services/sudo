@@ -1,0 +1,148 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+###########################################################################
+# sudo: A logwatch script to collate and format sudo log entries from
+#       the secure log. Entries are broken down by the user who issued
+#       the command, and further by the effective user of the command.
+#
+#       Detail Levels:
+#        0: Just print the command
+#       20: Include the current directory when the command was executed
+#           (on a separate line)
+#       30: Include the TTY on the directory line
+###########################################################################
+
+#######################################################
+## Copyright (c) 2008 Kirk Bauer
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+my %OtherList;
+
+my ($Debug,  $Detail,  %byUser, %byUserSum);
+my $Debug = $ENV{'LOGWATCH_DEBUG'} || 0;
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+# maximum number of commands user ran to display at low detail
+my $CmdsThresh = $ENV{'command_run_threshold'} || 0;
+my %IgnoreCmds;
+
+my ($user, $error, $tty, $dir, $euser, $egroup, $cmd, $args);
+my (%ConFailed);
+my $contlines = 0;
+my $argsprinted = 0;
+
+if (defined($ENV{'ignore_commands'})) {
+   foreach my $entry (split(',',$ENV{'ignore_commands'})) {
+      $entry =~ s/['"]//g;
+      my ($from_user,$to_user,$cmd) = split(';',$entry);
+      push(@{$IgnoreCmds{$from_user}{$to_user}},$cmd);
+   }
+}
+
+while (defined(my $ThisLine = <STDIN>)) {
+   if ($ThisLine =~ /pam_unix\(sudo:auth\): authentication failure; logname=\S* uid=[0-9]* euid=[0-9]* tty=\S* ruser=\S* rhost=\S*  user=\S*/
+      )
+       # this log is parsed in pam_unix section
+   {
+     # Ignore
+   } elsif ($ThisLine =~ /pam_unix\(sudo:session\): session (opened|closed) for user \S+/) {
+     # handled in pam_unix
+   } elsif ($ThisLine =~ /pam_unix\(sudo:auth\): auth could not identify password for/) {
+     # handled in pam_unix
+   } elsif ($ThisLine =~ /pam_sss\(sudo:auth\): authentication success/
+         or $ThisLine =~ /pam_systemd\(sudo:session\): Cannot create session: Already (running in|occupied by) a session/
+           ) {
+     # Ignore
+   } elsif ($ThisLine =~ /(.+): conversation failed/) {
+     $ConFailed{$1}++;
+   } elsif ( ($user, $error, $tty, $dir, $euser, $egroup, $cmd, $args) = $ThisLine =~ m/^\s*(\S+) : ([^=]+; )?(?:TTY=(\S+) ; )?PWD=(.*?) ; USER=(\S+) ;(?: GROUP=(\S+) ;)? COMMAND=(\S+)( ?.*)/) {
+      next if (defined($IgnoreCmds{$user}{$euser}) && $cmd =~ join("|",@{$IgnoreCmds{$user}{$euser}}));
+      next if (defined($IgnoreCmds{'any'}{$euser}) && $cmd =~ join("|",@{$IgnoreCmds{'any'}{$euser}}));
+      next if (defined($IgnoreCmds{$user}{'any'}) && $cmd =~ join("|",@{$IgnoreCmds{$user}{'any'}}));
+      if ($egroup) {
+         $euser .= ":${egroup}";
+      }
+      push @{$byUser{$user}{$euser}}, [$error . $cmd, $args, $dir, $tty];
+      $byUserSum{$user}{$euser}{$cmd} += 1;
+   } elsif ( ($user,$euser) = $ThisLine =~ /^\s*(\S+) : no passwd entry for (\S+)\!$/) {
+      push @{$byUser{$user}{$euser . " (No such user)"}}, ["No password entry"];
+   } elsif ( ($user, $error, $tty, $dir, $euser, $cmd, $args) = $ThisLine =~ m/^\s*\S+ : \(command continued\)/) {
+      $contlines++;
+   } else {
+   chomp($ThisLine);
+   $OtherList{$ThisLine}++;
+   }
+}
+
+foreach my $user (sort keys %byUser) {
+   foreach my $euser (sort keys %{$byUser{$user}}) {
+      print "\n$user => $euser\n", "-" x length("$user => $euser"), "\n";
+      foreach my $cmd (sort keys %{$byUserSum{$user}{$euser}}) {
+         if ($Detail < 10 && $CmdsThresh <= $byUserSum{$user}{$euser}{$cmd}) {
+            printf "%-30s - %3i Time(s).\n", $cmd, $byUserSum{$user}{$euser}{$cmd};
+          } # if $Detail < 10
+      } # foreach $gcmd
+      foreach my $row (@{$byUser{$user}{$euser}}) {
+         if ($Detail >= 10 || $CmdsThresh > $byUserSum{$user}{$euser}{$$row[0]}) {
+            my ($gcmd, $args, $dir, $tty) = @$row;
+            my $cmd = "$gcmd$args";
+            # make long commands easier to read
+            $cmd =~ s/(?=.{74,})(.{1,74}) /${1} \\\n    /g if (length($cmd) > 75);
+            print "$cmd\n";
+            if ($Detail >= 20) {
+               my $ttydetail = "";
+               $ttydetail = "($tty) " if $Detail >= 30;
+               print "\t$ttydetail$dir\n";
+            } # if $Detail >= 20
+            $argsprinted=1;
+         } # if $Detail >= 10
+      } # foreach $row
+   } # foreach $euser
+} # foreach $user
+
+if (keys %ConFailed) {
+   print "\nConversation failed with:";
+   print "\n-------------------------";
+   foreach my $conv (sort keys %ConFailed) {
+       printf "\n%-30s - %3i Time(s)", $conv, $ConFailed{$conv};
+   }
+   print "\n";
+}
+
+if($contlines && $argsprinted) {
+	print "\nThe argument list of some of above commands might be incomplete\n";
+}
+
+if (keys %OtherList) {
+   print "\n\n**Unmatched Entries**";
+   foreach my $line (sort {$OtherList{$b}<=>$OtherList{$a} } keys %OtherList) {
+      print "\n   $line: $OtherList{$line} Time(s)";
+   }
+}
+
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

@@ -1,0 +1,200 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#######################################################
+### Copyright (c) 2008 Win Bent <whb@haus.org>
+### Covered under the included MIT/X-Consortium License:
+###    http://www.opensource.org/licenses/mit-license.php
+### All modifications and contributions by other persons to
+### this script are assumed to have been donated to the
+### Logwatch project and thus assume the above copyright
+### and licensing terms.  If you want to make contributions
+### under your own copyright or a different license this
+### must be explicitly stated in the contribution an the
+### Logwatch project reserves the right to not accept such
+### contributions.  If you have made significant
+### contributions to this script and want to claim
+### copyright please contact logwatch-devel@lists.sourceforge.net.
+##########################################################
+
+use Logwatch ':sort';
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Debug = $ENV{'LOGWATCH_DEBUG'} || 0;
+my $Ignore_connections = $ENV{'ignore_connections'};
+
+$StillRoot = 0;
+$CleanTotal = 0;
+$SpamTotal = 0;
+$PyzorTerminated = 0;
+
+my %Child;
+my %Clean;
+my %Spam;
+my %Users;
+my %Connections;
+
+#Todo
+#    meta test DIGEST_MULTIPLE has undefined dependency 'DCC_CHECK' : 2 Time(s)
+#    server started on port 783/tcp (running version 3.1.9) : 2 Time(s)
+#    meta test DIGEST_MULTIPLE has undefined dependency 'RAZOR2_CHECK' : 2 Time(s)
+#    server hit by SIGHUP, restarting : 1 Time(s)
+#    server killed by SIGTERM, shutting down : 1 Time(s)
+#    meta test DIGEST_MULTIPLE has undefined dependency 'PYZOR_CHECK' : 1 Time(s)
+#    meta test SARE_SPEC_PROLEO_M2a has dependency 'MIME_QP_LONG_LINE' with a zero score : 1 Time(s)
+
+while (defined($ThisLine = <STDIN>)) {
+   if ( # We don't care about these
+      # Note that we DO care about "connection from" non-localhost
+      ( $ThisLine =~ m/connection from localhost / ) or
+      ( $ThisLine =~ m/setuid to / ) or
+      ( $ThisLine =~ m/processing message / ) or
+      ( $ThisLine =~ m/^spamd: result: .*,mid=\(unknown\)/ ) or
+      ( $ThisLine =~ m/^prefork: child states: / ) or
+      ( $ThisLine =~ m/^spamd: alarm *$/ ) or
+      ( $ThisLine =~ m/^spamd: handled cleanup of child / ) or
+      ( $ThisLine =~ m/^spamd: server successfully spawned child process, / ) or
+      ( $ThisLine =~ m/^logger: removing stderr method/ ) or
+      ( $ThisLine =~ m/^spamd: server pid:/ ) or
+      ( $ThisLine =~ m/^prefork: adjust: \d+ idle children (less|more) than \d+ (min|max)imum idle children/ ) or
+      # Sendmail messages to ignore
+      ( $ThisLine =~ m/^alias database / ) or
+      ( $ThisLine =~ m/^started as: / ) or
+      ( $ThisLine =~ m/[0-9]* aliases, longest [0-9]* bytes, [0-9]* bytes total/ ) or
+      ( $ThisLine =~ m/^AUTH=/ ) or
+      ( $ThisLine =~ m/^STARTTLS/ ) or
+      ( $ThisLine =~ m/^starting daemon \(/ ) or
+      ( $ThisLine =~ m/^ruleset=trust_auth/ ) or
+      ( $ThisLine =~ m/^ruleset=check_relay/ ) or
+      ( $ThisLine =~ m/^tls_srv_features=/ ) or
+      ( $ThisLine =~ m/^tls_clt_features=/ ) or
+      ( $ThisLine =~ m/^engine=/ ) or
+      0  # Always last in the list, so all above can say "or" at the end
+   ) {
+      ; # We don't care about these
+   } elsif ( ($User) = ($ThisLine =~ m/clean message .* for (.+?):\d+ / )) {
+      $Clean{ $User}++;
+      $Users{ $User}++;
+   } elsif ( ($User) = ($ThisLine =~ m/identified spam .* for (.+?):\d+ / )) {
+      $Spam{ $User}++;
+      $Users{ $User}++;
+   } elsif ( $ThisLine =~ m/still running as root: / ) {
+      $StillRoot++;
+   } elsif ( $ThisLine =~ m/^spamd: connection from (.*) at port / ) {
+      $Connections{$1}++;
+   # These are caused by pyzor taking too long and being terminated
+   } elsif ( $ThisLine =~ m/^pyzor:.* error: TERMINATED, signal 15/ ) {
+      $PyzorTerminated++;
+   } elsif ( $ThisLine =~ m/\bchild\b/ ) {
+      chomp($ThisLine);
+      # Many perl errors report pseudo-line-numbers, e.g.
+      #   ... at /usr/bin/spamd line 1085, <GEN5490> line 212
+      $ThisLine =~ s/\d+/___/g;  # Make all numbers "generic"
+      $Child{ $ThisLine }++;        # ...and count generic error types
+   } elsif ( ($spam, $score, $msgid) = ($ThisLine =~ m/^spamd: result: (.) (-?\d+).*,mid=<(.*)>/) ) {
+      # Only record the first scan
+      if (!defined($msg{$msgid}->{"score"}) and $spam eq "Y") {
+         $msg{$msgid}->{"score"} = $score;
+         $SpamRelay{$msg{$msgid}->{"relay"}}++;
+      }
+   } elsif ( $ThisLine =~ m/^\w+:/ ) {
+      # Sendmail lines for statistics
+      if ( ($from, $msgid, $relay) = ($ThisLine =~ m/^\w+: from=<(.*)>, .*, msgid=<(.*)>, .*, relay=(.*)/) ) {
+         $msg{$msgid}->{"from"} = $from;
+         $msg{$msgid}->{"relay"} = $relay;
+      }
+
+   # EVERYTHING ELSE, or, Incentive to identify all "We don't care" lines
+   # We on-purpose allow warnings about --max-children to go here
+   } else {
+      chomp($ThisLine);
+      # Report any unmatched entries...
+      $OtherList{$ThisLine}++;
+   }
+}
+
+#######################################################
+
+#XX print "# Detail:${Detail}\n"; #XX debugging
+
+if ( keys %Users ) {
+   my ($u, $cl, $sp);
+   print "\nMail Recipients:\n";
+   # Some might want to limit this output based on $Detail, but we want it all!
+   foreach $u (sort {$a cmp $b} keys %Users) {
+      $cl = 0 + $Clean{$u};   # Avoid "undefined" error
+      $sp = 0 + $Spam{$u};    # Avoid "undefined" error
+      $CleanTotal += $cl;
+      $SpamTotal += $sp;
+      #OLD: If one user gets over 9999 messages, you have our sympathies
+      #NOW: If one user gets over 99999 messages, you have our sympathies
+      printf "   %-8s : %4d clean, %5d spam\n", $u, $cl, $sp;
+   }
+}
+
+if ( $CleanTotal || $SpamTotal ) {
+   my $ttotal = $CleanTotal + $SpamTotal;
+   print "\nSummary:\n";
+   printf "\tTotal Clean: %5d (%3d%%)\n", $CleanTotal,
+      int ((100.0 * $CleanTotal / $ttotal) + 0.5);
+   printf "\tTotal Spam:  %5d (%3d%%)\n", $SpamTotal,
+      int ((100.0 * $SpamTotal / $ttotal) + 0.5);
+}
+
+if (keys %SpamRelay) {
+   print "\nTop 10 Spam Relays:\n";
+   $i = 0;
+   foreach $relay (sort {$SpamRelay{$b}<=>$SpamRelay{$a} } keys %SpamRelay) {
+      print "   $relay: $SpamRelay{$relay} Time(s)\n";
+      last if ++$i == 10;
+   }
+}
+   
+if ( $StillRoot ) {
+   print qq{\n"still running as root" error: $StillRoot time(s)\n};
+}
+
+if (keys %Child) {
+   print "\nChild-related errors\n";
+   foreach $line (sort {$Child{$b}<=>$Child{$a} } keys %Child) {
+      print "   $line: $Child{$line} Time(s)\n";
+   }
+}
+
+if (keys %Connections) {
+   my $header_printed = 0;
+   foreach my $connection ( sort {$a cmp $b} keys %Connections ) {
+      if ($Ignore_connections && $connection =~ /$Ignore_connections/) { next; }
+      if (!$header_printed) {
+         print "\nConnections from:\n";
+         $header_printed = 1;
+      }
+      print "   $connection : $Connections{$connection} Time(s)\n";
+   }
+}
+
+if ( $PyzorTerminated) {
+   print "\nPyzor TERMINATED errors: $PyzorTerminated time(s)\n";
+}
+
+if (keys %OtherList) {
+   print "\n**Unmatched Entries**\n";
+   foreach $line (sort {$OtherList{$b}<=>$OtherList{$a} } keys %OtherList) {
+      print "   $line: $OtherList{$line} Time(s)\n";
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

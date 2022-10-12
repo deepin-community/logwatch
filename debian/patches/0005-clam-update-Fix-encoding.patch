@@ -1,0 +1,35 @@
+From: Willi Mann <willi@debian.org>
+Date: Fri, 5 Nov 2021 13:44:49 +0100
+Subject: clam-update: Fix encoding
+
+---
+ conf/logfiles/clam-update.conf | 2 +-
+ conf/services/clam-update.conf | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/conf/logfiles/clam-update.conf b/conf/logfiles/clam-update.conf
+index f0249e1..e331771 100644
+--- a/conf/logfiles/clam-update.conf
++++ b/conf/logfiles/clam-update.conf
+@@ -7,7 +7,7 @@
+ # Version: 1.0.1
+ #    Minor documentation update
+ #
+-# Written by: Lars Skjærlund <lars@skjaerlund.dk>
++# Written by: Lars SkjÃ¦rlund <lars@skjaerlund.dk>
+ #########################################################################
+ 
+ #########################################################################
+diff --git a/conf/services/clam-update.conf b/conf/services/clam-update.conf
+index cf4d301..2ebaba8 100644
+--- a/conf/services/clam-update.conf
++++ b/conf/services/clam-update.conf
+@@ -7,7 +7,7 @@
+ # Version: 1.0.1
+ #    Minor documentation update
+ #
+-# Written by: Lars Skjærlund <lars@skjaerlund.dk>
++# Written by: Lars SkjÃ¦rlund <lars@skjaerlund.dk>
+ #########################################################################
+ 
+ #########################################################################

@@ -1,0 +1,13 @@
+[Unit]
+Description=Log analyzer and reporter
+Documentation=man:logwatch(8) man:logwatch.conf(5)
+Before=logrotate.service
+
+[Service]
+Type=oneshot
+# This first EnvironmentFile has the Logwatch default variables
+EnvironmentFile=-/usr/share/logwatch/default.conf/systemd.conf
+# This second EnvironmentFile is meant for system-specific
+# customization of variables, including overriding the defaults
+EnvironmentFile=-/etc/logwatch/conf/systemd.conf
+ExecStart=/usr/sbin/logwatch $LOGWATCH_OPTIONS

@@ -1,0 +1,163 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2008 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+use warnings;
+use URI::URL;
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Ignore_messages = $ENV{'ignore_messages'} || '^$';
+my $Ignore_profile_program = $ENV{'ignore_profile_program'} || '^$';
+my $Laptops = $ENV{'laptops'} || '^$';
+my %Applications;
+
+while (defined(my $ThisLine = <STDIN>)) {
+   # User specified ignore messages, lower cased
+   next if $ThisLine =~ /$Ignore_messages/i;
+
+   my ($Criticality,$SourceName,$DateTime,$EventID,$Application,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra);
+   #Determine format
+   if ($ThisLine =~ /MSWinEventLog\[/) {  # Snare 4
+      #Parse
+      ($Criticality,$SourceName,$DateTime,$EventID,$Application,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra) =
+         ($ThisLine =~ /(\S+)\sMSWinEventLog\[(\d+)\]:(\w+)\t\d+\t([^\t]+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)/);
+   } elsif ($ThisLine =~ /MSWinEventLog\t/) { # Snare 3
+      #Parse
+      ($Criticality,$SourceName,$DateTime,$EventID,$Application,$UserName,$SIDType,$EventLogType,$Hostname,$CategoryString,$DataString,$ExpandedString,$Extra) =
+         ($ThisLine =~ /MSWinEventLog\t(\d+)\t(\w+)\t\d+\t([^\t]+)\t(\d+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)\t?([^\t]*)/);
+   }
+   if (!defined($Hostname)) {
+      print STDERR "Cannot parse $ThisLine";
+      next;
+   }
+   next if $EventLogType eq "Information" and $ExpandedString !~ "BlueScreen";
+   next if $ExpandedString eq "N/A";
+
+   # Modify some items that prevent de-duplication
+   if ($Detail < 10) {
+      $ExpandedString =~ s/(NextScheduled\S+|PID) \d+/$1 XXX/;
+      $ExpandedString =~ s,\d{4}/\d\d/\d\d \d\d:\d\d:\d\d(?:\.\d+)?,TIMESTAMP,;
+   }
+
+   #print STDERR "ExpandedString = $ExpandedString\n";
+   if ($Application =~ /Userenv/) {
+      $ExpandedString = "$UserName $ExpandedString";
+   }
+
+   if ($Application eq "Application Error") {
+      if (my ($exe, $exever, $module, $modulever) =
+          ($ExpandedString =~ /Faulting application name: (.*), version: (\S+), time stamp: .*Faulting module name: (.*), version: (\S+)/)) {
+         $Applications{$Application}->{"$Hostname: Faulting application name: $exe, version: $exever, module name: $module, version $modulever"}++;
+         next;
+      }
+   } elsif ($Application eq "Application Hang") {
+      if (my ($exe, $exever, $msg) =
+          ($ExpandedString =~ /The program (.*) version (\S+) (.*) Process ID:/)) {
+         $Applications{$Application}->{"$Hostname: The program $exe version $exever $msg"}++;
+         next;
+      } else {
+         print "Application Hang: Cannot parse $ExpandedString\n";
+      }
+   } elsif ($Application eq "AutoEnrollment") {
+      #Ignore these - we don't run active directory
+      next if $ExpandedString =~ /Automatic certificate enrollment for local system failed to contact the active directory/;
+   } elsif ($Application =~ /^Group Policy/) {
+      next if $ExpandedString =~ /This error was suppressed/;
+      next if $ExpandedString =~ /could not apply .* The network path was not found/ and $Hostname =~ /$Laptops/i;
+   } elsif ($Application =~ /Intel Alert/) {
+      #Ignore these
+      next if $ExpandedString =~ /Intel Alert Originator Manager loaded without security/;
+      next if $ExpandedString =~ /Service Initialized Successfully/;
+   } elsif ($Application =~ /LoadPerf/) {
+      #Ignore these
+      next if $ExpandedString =~ /Performance counters for the .* service were loaded successfully/;
+      next if $ExpandedString =~ /Performance counters for the .* service were removed successfully/;
+   } elsif ($Application =~ /NSCTOP/) {
+      #Ignore these
+      next if $ExpandedString =~ /Service started/;
+   } elsif ($Application eq "Microsoft-Windows-CertificationAuthority") {
+      next if $ExpandedString =~ /The Active Directory connection to .* has been reestablished to/;
+   } elsif ($Application eq "Microsoft-Windows-Search") {
+      next if $ExpandedString =~ /The content source .* cannot be accessed.  Context:  Application, SystemIndex Catalog  Details:  The object was not found/;
+   } elsif ($Application eq "Microsoft-Windows-User Profiles Service") {
+      if ( my ($program) = ($ExpandedString =~ /^Windows detected your registry file is still in use by other applications or services. The file will be unloaded now\..* Process \d+ \(\\Device\\.*\\(.*)\) has opened key .*/)) {
+         next if $program =~ /$Ignore_profile_program/;
+      }
+   } elsif ($Application =~ /Norton Ghost/) {
+      #Ignore these
+      next if $ExpandedString =~ /Norton Ghost service started successfully/;
+      next if $ExpandedString =~ /A scheduled baseline backup of .* completed successfully/;
+      next if $ExpandedString =~ /A scheduled incremental backup of .* completed successfully/;
+   } elsif ($Application =~ /SecurityCenter/) {
+      #Ignore these - appears to be normal http://www.eventid.net/display.asp?eventid=1807&eventno=4468&source=SecurityCenter&phase=1
+      next if $ExpandedString =~ /The Security Center service has been stopped.  It was prevented from running by a software group policy/;
+   } elsif ($Application eq "SceCli") {
+      next if $ExpandedString =~ /^Security policy cannot be propagated\. Cannot access the template\. Error code = 3\./ and $Hostname =~ /$Laptops/i;
+   } elsif ($Application eq "ShadowProtectSPX") {
+      next if $ExpandedString =~ /^Backup Finished/;
+      next if $ExpandedString =~ /^Backup Failed .*\(\\\\.*The backup destination is not accessible/ and $Hostname =~ /$Laptops/i;
+   } elsif ($Application =~ /SNARE/) {
+      #Ignore these
+      next if $ExpandedString =~ /The service was started/;
+      next if $ExpandedString =~ /The service was stopped/;
+   } elsif ($Application eq "SpeechRuntime") {
+      next if $ExpandedString =~ /^Audio Orchestrator Power Event: Battery Saver Turned On, Voice Activation Disabled/;
+   } elsif ($Application =~ /Symantec AntiVirus/) {
+      #Ignore these
+      next if $ExpandedString =~ /Symantec AntiVirus services startup was successful/;
+      next if $ExpandedString =~ /Scan Complete:  Risks: 0/;
+      next if $ExpandedString =~ /Scan started on all drives and all extensions/;
+      next if $ExpandedString =~ /Scan started on selected drives and folders and all extensions/;
+      next if $ExpandedString =~ /Download of virus definition file from LiveUpdate server succeeded/;
+      next if $ExpandedString =~ /Virus definitions are current/;
+      next if $ExpandedString =~ /Could not scan \d+ files inside .* due to extraction errors encountered by the Decomposer Engines/;
+   } elsif ($Application =~ /cc.*Mgr/) {
+      #Ignore these
+      next if $ExpandedString =~ /service is starting/;
+      next if $ExpandedString =~ /service has started/;
+   }
+
+   my $url = URI::URL->new("http://www.eventid.net/display.asp?eventid=$EventID&source=$Application");
+   my $urlstr = $url->abs;
+   $Applications{$Application}->{"$Hostname: $ExpandedString\n$url"}++;
+}
+
+if (keys %Applications) {
+   foreach my $Application (sort(keys %Applications)) {
+      print "\n$Application\n";
+      foreach my $Error (sort(keys %{$Applications{$Application}})) {
+         print "    $Error : $Applications{$Application}->{$Error} Times\n";
+      }
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

@@ -1,0 +1,304 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2011 Nathan Crawford
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution and the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+# Detail level
+$Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+
+# Config
+my $offline = $ENV{'puppet_offline_ok'};
+
+# Init counters
+$FailedRuns = 0;
+$SuccessfulRuns = 0;
+$ResourceFailures = 0;
+$DependencyFailures = 0;
+
+while (defined($ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+   if ( 
+      ($ThisLine =~ /Using cached catalog/) or
+      ($ThisLine =~ /Caching catalog for /) or
+      ($ThisLine =~ /Caching node for /) or
+      ($ThisLine =~ /Caught TERM; calling stop/) or
+      ($ThisLine =~ /[sS]hutting down/) or
+      ($ThisLine =~ /Reopening log files/) or
+      ($ThisLine =~ /Starting Puppet client version /) or
+      ($ThisLine =~ /Restarting with.+puppetd/) or
+      ($ThisLine =~ /Caught HUP; calling restart/) or
+      ($ThisLine =~ /Skipping because of failed dependencies/) or
+      ($ThisLine =~ /Failed to generate additional resources/) or
+      ($ThisLine =~ /Could not evaluate: getaddrinfo: Name or service not known/) or
+      ($ThisLine =~ /replacing from source .+ with contents /) or
+      ($ThisLine =~ /Starting catalog run/) or
+      ($ThisLine =~ /Applying configuration version/) or
+      ($ThisLine =~ /Loading facts in/) or
+      ($ThisLine =~ /Retrieving plugin/) or
+      ($ThisLine =~ /FileBucket adding/) or
+      ($ThisLine =~ /^Caching certificate/) or
+      ($ThisLine =~ /^Certificate Request fingerprint/) or
+      ($ThisLine =~ /^Creating state file/) or
+      ($ThisLine =~ /Provider useradd does not support features manages/)
+   ) {
+      # Ignore
+   } elsif (($junk, $failure, $reason) = ($ThisLine =~ /^(\(.*\) |)Could not ([^:]*): (.*)/)) {
+      if ($reason == "getaddrinfo: Name or service not known" && $offline) {
+         $FailedRuns--;
+      } else {
+         $Failures{$failure}->{$reason}++;
+      }
+   } elsif ($ThisLine =~ /Finished catalog run in [0-9]+\.[0-9]+ seconds/) {
+      $SuccessfulRuns++;
+   } elsif ($ThisLine =~ /Applied catalog in [0-9]+\.[0-9]+ seconds/) {
+      $SuccessfulRuns++;
+   } elsif ($ThisLine =~ /skipping run/) {
+      $FailedRuns++;
+   } elsif ($ThisLine =~ /(Did not receive certificate)/) {
+      $Errors{$1}++;
+   } elsif (($file) = $ThisLine =~ /Reparsing (.*)/) {
+      $Reparsed{$file}++;
+   } elsif (($fileinfo) = ($ThisLine =~ /Filebucketed (.*)/)) {
+      $FileBucketed{$1}++;
+   } elsif ($ThisLine =~ /Dependency .+\[.+\] has ([0-9]+ |)failure/) {
+      $DependencyFailures++;
+   } elsif (
+      ($ThisLine =~ /Failed to retrieve current state of resource/) or
+      ($ThisLine =~ /Package.+ensure.+Could not find package/) or
+      ($ThisLine =~ /File\[.+\].+ Could not describe /) or
+      ($ThisLine =~ /File\[.+\].+ No specified sources exist/)
+   ) {
+      $ResourceFailures++;
+   } elsif ($ThisLine =~ /Package\[(.+)\].+ensure changed/) {
+      $ChangedPackages{$1}++;
+   } elsif ($ThisLine =~ /Package\[(.+)\].+ensure\) created/) {
+      $InstalledPackages{$1}++;
+   } elsif ($ThisLine =~ /Package\[(.+)\].+ensure\) removed/) {
+      $RemovedPackages{$1}++;
+   } elsif ($ThisLine =~ /Exec\[(.+)\].+executed successfully/) {
+      $ExecRuns{$1}++;
+   } elsif ($ThisLine =~ /Exec\[(.+)\].+Trigger(?:ing|ed) 'refresh' from [0-9]+ (?:dependencies|events)/) {
+      $ExecRuns{$1}++;
+   } elsif ($ThisLine =~ /Exec\[(.+)\].+Triggered 'refresh' from [0-9]+ events/) {
+      $ExecRuns{$1}++;
+   } elsif ($ThisLine =~ /Service\[(.+)\].+ensure changed \'.+\' to \'running\'/) {
+      $ServiceStarts{$1}++;
+   } elsif ($ThisLine =~ /Service\[(.+)\].+Trigger(?:ing|ed) 'refresh' from [0-9]+ (?:dependencies|events)/) {
+      $ServiceStarts{$1}++;
+   } elsif ($ThisLine =~ /Service\[(.+)\].+Triggered 'refresh' from [0-9]+ events/) {
+      $ServiceStarts{$1}++;
+   } elsif ($ThisLine =~ /Service\[(.+)\].+ensure changed \'.+\' to \'stopped\'/) {
+      $ServiceStops{$1}++;
+   } elsif ($ThisLine =~ /User\[(.+)\].+changed password/) {
+      $PasswordChanged{$1}++;
+   } elsif ($ThisLine =~ /User\[(.+)\].+defined \'expiry\' as \'([0-9-]{10})\'/) {
+      $ExpiryChanged{$1}{$2}++;
+
+   # Generic rules need to be last
+   } elsif (($type, $name, $attr) = $ThisLine =~ /([^\/]+)\[([^\]]+)\]\/([^\/]+)\) (created|defined content)/) {
+      $Created{$type}->{$name}++;
+   } elsif (($type, $name, $attr) = $ThisLine =~ /([^\/]+)\[([^\]]+)\]\/([^\/]+)\) removed/) {
+      $Removed{$type}->{$name}++;
+   } elsif (($type, $name, $attr, $from, $to) = $ThisLine =~ /([^\/]+)\[([^\]]+)\]\/([^\/]+)\) .+ changed '(.*)' to '(.*)/) {
+      if ($attr eq 'content' or $attr eq 'checksum') {
+         # Only count these types of changes
+         $Changed{$type}->{$name}->{$attr}++;
+      } else {
+         # Get details for all other types of changes
+         $Changed{$type}->{$name}->{$attr}->{'from'} = $from;
+         $Changed{$type}->{$name}->{$attr}->{'to'} = $to;
+      }
+   } elsif (($type, $name, $attr, $from) = $ThisLine =~ /([^\/]+)\[([^\]]+)\]\/([^\/]+)\) undefined '.+' from '(.*)'/) {
+      $Changed{$type}->{$name}->{$attr}->{'from'} = $from;
+      $Changed{$type}->{$name}->{$attr}->{'to'} = 'undefined';
+   } elsif (($type, $name, $content) = $ThisLine =~ /([^\/]+)\[([^\]]+)\]\/content\)(.*)/) {
+      $content =~ s/#011/\t/g;
+      $content =~ s/#012/\n            /g or $content .= "\n            ";
+      $Changed{$type}->{$name}->{'contents'} .= $content;
+   } elsif (($source, $target) = $ThisLine =~ /^\(\/(.*)\) Scheduling refresh of (.*)/) {
+      $ScheduledRefresh{"$source -> $target"}++;
+   } else {
+      # Report any unmatched entries...
+      $OtherList{$ThisLine}++;
+   }
+}
+
+#######################################
+
+if ($SuccessfulRuns > 0 && $Detail > 0) {
+   print "\nSuccessful runs: $SuccessfulRuns\n";
+}
+
+if ($FailedRuns > 0) {
+   print "\nFailed runs: $FailedRuns\n";
+}
+
+if (keys %Errors) {
+   print "\nERRORS:\n";
+   foreach $ThisOne (keys %Errors) {
+      print "    $ThisOne: $Errors{$ThisOne} Time(s)\n";
+   }
+}
+
+foreach $failure (sort(keys %Failures)) {
+   print "\nERROR: Could not $failure:\n";
+   foreach $ThisOne (keys %{$Failures{$failure}}) {
+      print "    $ThisOne: $Failures{$failure}->{$ThisOne} Time(s)\n";
+   }
+}
+
+if ($ResourceFailures > 0) {
+   print "\nResource failures: $ResourceFailures\n";
+}
+
+if ($DependencyFailures > 0) {
+   print "\nDependency failures: $DependencyFailures\n";
+}
+
+if (keys %Reparsed) {
+   print "\nReparsed:\n";
+   foreach $ThisOne (keys %Reparsed) {
+      print "    $ThisOne: $Reparsed{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %FileBucketed and $Detail >= 5) {
+   print "\nFileBucketed files:\n";
+   foreach $ThisOne (keys %FileBucketed) {
+      print "    $ThisOne\n";
+   }
+}
+
+if (keys %InstalledPackages) {
+   print "\nInstalled packages:\n";
+   foreach $ThisOne (keys %InstalledPackages) {
+      print "    $ThisOne: $InstalledPackages{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %ChangedPackages) {
+   print "\nChanged packages:\n";
+   foreach $ThisOne (keys %ChangedPackages) {
+      print "    $ThisOne: $ChangedPackages{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %RemovedPackages) {
+   print "\nRemoved packages:\n";
+   foreach $ThisOne (keys %RemovedPackages) {
+      print "    $ThisOne: $RemovedPackages{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %ExecRuns) {
+   print "\nExec runs:\n";
+   foreach $ThisOne (keys %ExecRuns) {
+      print "    $ThisOne: $ExecRuns{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %ServiceStarts) {
+   print "\nService starts:\n";
+   foreach $ThisOne (keys %ServiceStarts) {
+      print "    $ThisOne: $ServiceStarts{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %ServiceStops) {
+   print "\nService stops:\n";
+   foreach $ThisOne (keys %ServiceStops) {
+      print "    $ThisOne: $ServiceStops{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %PasswordChanged) {
+   print "\nPassword changed:\n";
+   foreach $ThisOne (keys %PasswordChanged) {
+      print "    $ThisOne: $PasswordChanged{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %ExpiryChanged) {
+   print "\nExpiry changed:\n";
+   foreach $ThisOne (keys %ExpiryChanged) {
+      print "    $ThisOne:\n";
+      foreach $date (keys %{${ExpiryChanged}{$ThisOne}}) {
+         print "        $date: $ExpiryChanged{$ThisOne}{$date} Time(s)\n";
+      }
+   }
+}
+
+foreach $Type (sort(keys %Created)) {
+   print "\n$Type created:\n";
+   foreach $Name (sort(keys %{$Created{$Type}})) {
+      print "    $Name: $Created{$Type}->{$Name} Time(s)\n";
+   }
+}
+
+foreach $Type (sort(keys %Changed)) {
+   print "\n$Type changed:\n";
+   foreach $Name (sort(keys %{$Changed{$Type}})) {
+      print "    $Name:\n";
+      foreach $Attr (sort(keys %{$Changed{$Type}->{$Name}})) {
+         if ($Attr eq 'contents') {
+            if ($Detail >= 3) {
+                print "        $Attr:";
+                print "$Changed{$Type}->{$Name}->{$Attr}\n";
+            }
+         } else {
+            print "        $Attr: ";
+            if (defined($Changed{$Type}->{$Name}->{$Attr}->{'from'})) {
+               print "from '$Changed{$Type}->{$Name}->{$Attr}->{from}' to '$Changed{$Type}->{$Name}->{$Attr}->{to}'\n";
+            } else {
+               print "$Changed{$Type}->{$Name}->{$Attr} Time(s)\n";
+            }
+         }
+      }
+   }
+}
+
+foreach $Type (sort(keys %Removed)) {
+   print "\n$Type removed:\n";
+   foreach $Name (sort(keys %{$Removed{$Type}})) {
+      print "    $Name: $Removed{$Type}->{$Name} Time(s)\n";
+   }
+}
+
+if (keys %ScheduledRefresh) {
+   print "\nScheduled refresh:\n";
+   foreach $ThisOne (keys %ScheduledRefresh) {
+      print "    $ThisOne: $ScheduledRefresh{$ThisOne} Time(s)\n";
+   }
+}
+
+if (keys %OtherList) {
+   print "\n**Unmatched Entries**\n";
+   foreach $ThisOne (keys %OtherList) {
+      print "    $ThisOne: $OtherList{$ThisOne} Time(s)\n";
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+

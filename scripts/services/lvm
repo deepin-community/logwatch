@@ -1,0 +1,172 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2014-2019 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+use warnings;
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $PoolThreshold = $ENV{'pool_threshold'} || 0;
+my $PoolMetadataThreshold = $ENV{'pool_metadata_threshold'} || 0;
+my %Active;
+my %PoolUsed;
+my %PoolMetadataUsed;
+my $SnapshotThreshold = $ENV{'snapshot_threshold'} || 0;
+my %SnapshotUsed;
+my %MonitoringOn;
+my %MonitoringOff;
+my %MonitoringSnapshot;
+my %MonitoringSnapshotOff;
+my %Resize;
+my %OtherList;
+
+while (defined(my $ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+   # Seeing leading space on Fedora 26
+   $ThisLine =~ s/^ *//;
+   if ($ThisLine =~ /^pvscan\[\d+\] PV .* online(?:|, VG .* is complete)\.$/ 
+       or $ThisLine =~ /pvscan\[\d+\] VG .* run autoactivation/
+       # This happens often at startup
+       or $ThisLine =~ /^WARNING: lvmetad is being updated, retrying/
+       # This happens when dmeventd autostarted
+       or $ThisLine =~ /dmeventd ready for processing\.$/
+       or $ThisLine =~ /dmeventd shutting down\.$/
+       or $ThisLine =~ /dmeventd was idle for .*, exiting\.$/
+       # Misc cleanups
+       or $ThisLine =~ /Logical volume .* successfully resized/
+      ) {
+      # Ignore
+   } elsif ($ThisLine =~ /^(?:WARNING: )?Thin (\S+) is now (\d+(\.\d+)?)% full/) {
+      $PoolUsed{$1} = $2 if $2 >= $PoolThreshold;
+   } elsif ($ThisLine =~ /^(?:WARNING: )?Thin metadata (\S+) is now (\d+(\.\d+)?)% full/) {
+      $PoolMetadataUsed{$1} = $2 if $2 >= $PoolMetadataThreshold;
+   } elsif ($ThisLine =~ /^Monitoring thin pool (\S+)\./) {
+      $MonitoringOn{$1}++;
+   } elsif ($ThisLine =~ /^Monitoring snapshot (\S+)\./) {
+      $MonitoringSnapshot{$1}++;
+   } elsif ($ThisLine =~ /^No longer monitoring thin pool (\S+)\./) {
+      $MonitoringOff{$1}++;
+   } elsif ($ThisLine =~ /^No longer monitoring snapshot (\S+)\./) {
+      $MonitoringSnapshotOff{$1}++;
+   } elsif ($ThisLine =~ /^(?:WARNING: )?Snapshot (\S+) is now (\d+(\.\d+)?)% full/) {
+      $SnapshotUsed{$1} = $2 if $2 >= $SnapshotThreshold;
+   } elsif ($ThisLine =~ /^(\d+) logical volume\(s\) in volume group "(\S+)" monitored/) {
+      $MonitoringOn{$2}++;
+   } elsif ($ThisLine =~ /^(\d+) logical volume\(s\) in volume group "(\S+)" unmonitored/) {
+      $MonitoringOff{$2}++;
+   } elsif ($ThisLine =~ /^(\d+) logical volume\(s\) in volume group "(\S+)" now active/) {
+      $Active{$2}=$1;
+   } elsif ($ThisLine =~ /^Size of logical volume (\S+) changed from (.*) to (.*)\.$/) {
+      $Resize{$1}="$3"
+   } else {
+      $OtherList{$ThisLine}++;
+   }
+}
+
+if (keys %PoolUsed) {
+   print "Thin Pool Usage:\n";
+   foreach my $Pool (sort {$a cmp $b} keys %PoolUsed) {
+      print "    $Pool: $PoolUsed{$Pool}% full\n";
+   }
+   print "\n";
+}
+
+if (keys %PoolMetadataUsed) {
+   print "Thin Pool Metadata Usage:\n";
+   foreach my $Pool (sort {$a cmp $b} keys %PoolMetadataUsed) {
+      print "    $Pool: $PoolMetadataUsed{$Pool}% full\n";
+   }
+   print "\n";
+}
+
+if (keys %SnapshotUsed) {
+   print "Snapshot Usage:\n";
+   foreach my $Snapshot (sort {$a cmp $b} keys %SnapshotUsed) {
+      print "    $Snapshot: $SnapshotUsed{$Snapshot}% full\n";
+   }
+   print "\n";
+}
+
+if (keys %Resize) {
+   print "Resize snapshot:\n";
+   foreach my $Snapshot (sort {$a cmp $b} keys %Resize) {
+      print "    $Snapshot: $Resize{$Snapshot}\n";
+   }
+   print "\n";
+}
+
+if (keys %Active and $Detail) {
+   print "LVM active:\n";
+   foreach my $VG (sort {$a cmp $b} keys %MonitoringOn) {
+      print "    $VG: $Active{$VG} logical volume(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %MonitoringOn and $Detail) {
+   print "Monitoring started for:\n";
+   foreach my $Pool (sort {$a cmp $b} keys %MonitoringOn) {
+      print "    $Pool: $MonitoringOn{$Pool} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %MonitoringOff and $Detail) {
+   print "Monitoring stopped for:\n";
+   foreach my $Pool (sort {$a cmp $b} keys %MonitoringOff) {
+      print "    $Pool: $MonitoringOff{$Pool} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %MonitoringSnapshot and $Detail) {
+   print "Monitoring snapshot:\n";
+   foreach my $Snapshot (sort {$a cmp $b} keys %MonitoringSnapshot) {
+      print "    $Snapshot: $MonitoringSnapshot{$Snapshot} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %MonitoringSnapshotOff and $Detail) {
+   print "Monitoring stopped for snapshot:\n";
+   foreach my $Snapshot (sort {$a cmp $b} keys %MonitoringSnapshotOff) {
+      print "    $Snapshot: $MonitoringSnapshotOff{$Snapshot} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %OtherList) {
+   print "\n**Unmatched Entries**\n";
+   foreach my $line (sort {$a cmp $b} keys %OtherList) {
+      print "   $line: $OtherList{$line} Time(s)\n";
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

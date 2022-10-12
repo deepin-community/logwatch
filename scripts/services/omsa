@@ -1,0 +1,114 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2014 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+use warnings;
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $IgnoreNonCertifiedDrives = $ENV{'omsa_ignore_non_certified_drives'} || 0;
+my %ServiceError;
+my %ServiceMessage;
+my %OtherList;
+
+# Lines are of the form:
+#     3017 2048 - Storage Service  Device failed:  Battery 0 Controller 0
+#     \d+ \d+ - (\w+) Service  (.*)
+while (defined(my $ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+   my ($Service,$Message) = ($ThisLine =~ /^\d+ \d+ - (\w+) Service  (.*)$/);
+   if ($Message =~ /fail|disable|replace/i) {
+      # Service erroneously detects failure on service startup
+      next if (($Service eq "Instrumentation") and $Message =~ /^Power supply detected a failure.*Previous state was: Unknown/);
+      $ServiceError{$Service}->{$Message}++;
+   } elsif (defined($Service)) {
+      # Skip informational messages if needed
+      if ($Service eq "Instrumentation") {
+         # Service erroneously detects absence on service startup
+         next if ($Message =~ /^Battery sensor detected absence value/);
+         next if (($Message =~ /^IPMI status.*Interface:/) and ($Detail < 10));
+         next if (($Message =~ /^Server Administrator start.*/) and ($Detail < 10));
+         next if (($Message =~ /^Systems Management Data Manager (?:Started|Stopped)/) and ($Detail < 10));
+      } elsif ($Service eq "Storage") {
+         next if (($Message =~ /^Controller event log: Battery (?:Present|charge complete|started charging|temperature is normal)/) and ($Detail < 5));
+         next if (($Message =~ /^Controller event log: (Board Revision|Controller hardware revision ID)/) and ($Detail < 10));
+         next if (($Message =~ /^Controller event log: Current capacity of the battery is above threshold/) and ($Detail < 5));
+         next if (($Message =~ /^Controller event log: Enclosure .* (:?communication restored|discovered)/) and ($Detail < 10));
+         next if (($Message =~ /^Controller event log: Firmware initialization started/) and ($Detail < 10));
+         next if (($Message =~ /^Controller event log: Inserted:/) and ($Detail < 5));
+         next if (($Message =~ /^Controller event log: PD .* is not a certified drive/) and ($IgnoreNonCertifiedDrives));
+         next if (($Message =~ /^Controller event log: Package version/) and ($Detail < 10));
+         next if (($Message =~ /^Controller event log: Patrol Read (started|stopped|resumed)/) and ($Detail < 5));
+         next if (($Message =~ /^Controller event log: Shutdown command received from host/) and ($Detail < 1));
+         next if (($Message =~ /^Controller event log: Time established as/) and ($Detail < 10));
+         next if (($Message =~ /^Controller event log: Unexpected sense: Encl PD .* CDB: 12 00 00 00 (:?04|20) 00, Sense: 5\/24\/00/) and ($IgnoreNonCertifiedDrives));
+         next if (($Message =~ /^Controller event log: Unexpected sense: PD .* CDB: 12 01 dc 01 1d 00, Sense: (4\/cf|5\/24)\/00/) and ($IgnoreNonCertifiedDrives));
+         next if (($Message =~ /SCSI sense data:? \(?Sense key:  5 Sense code: 24 Sense qualifier:  0/) and ($IgnoreNonCertifiedDrives));
+         next if (($Message =~ /^Disk found is not supplied by an authorized hardware provider/) and ($IgnoreNonCertifiedDrives));
+         next if (($Message =~ /^The battery charge cycle is complete\./) and ($Detail < 5));
+         next if (($Message =~ /^The controller battery Learn cycle will start in (?:\d+) days\./) and ($Detail < 5));
+         next if (($Message =~ /^The Patrol Read has (started|stopped|resumed)/) and ($Detail < 5));
+      }
+      $ServiceMessage{$Service}->{$Message}++;
+   } else {
+      $OtherList{$ThisLine}++;
+   }
+}
+
+if (keys %ServiceError) {
+   print "ERRORS:\n";
+   foreach my $Service (sort {$a cmp $b} keys %ServiceError) {
+      print "    $Service Service:\n";
+      foreach my $Error (sort {$a cmp $b} keys %{$ServiceError{$Service}}) {
+         print "        $Error $ServiceError{$Service}->{$Error} Time(s)\n";
+      }
+      print "\n";
+   }
+}
+
+if (keys %ServiceMessage) {
+   print "Informational:\n";
+   foreach my $Service (sort {$a cmp $b} keys %ServiceMessage) {
+      print "    $Service Service:\n";
+      foreach my $Message (sort {$a cmp $b} keys %{$ServiceMessage{$Service}}) {
+         print "        $Message $ServiceMessage{$Service}->{$Message} Time(s)\n";
+      }
+      print "\n";
+   }
+}
+
+if (keys %OtherList) {
+   print "\n\n**Unmatched Entries**\n";
+   foreach my $line (sort {$a cmp $b} keys %OtherList) {
+      print "   $line: $OtherList{$line} Time(s)\n";
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

@@ -1,0 +1,11 @@
+logwatch (7.1-1) unstable; urgency=low
+
+  * This version will remove untouched configuration files in 
+    /etc/logwatch/conf. If you modified it, it will be renamed to 
+    $file.dpkg-bak. You should read 
+    /usr/share/doc/logwatch/HOWTO-Customize-LogWatch and only put 
+    the required modification back in $file.
+  * This package is now maintained as alioth project "pkg-logwatch". 
+    It uses an svn repository on svn.debian.org.
+
+ -- Willi Mann <willi@wm1.at>  Sat, 19 Nov 2005 16:39:24 +0100

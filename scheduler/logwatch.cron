@@ -1,0 +1,16 @@
+#!/bin/sh
+
+#Set logwatch executable location
+LOGWATCH_SCRIPT="/usr/sbin/logwatch"
+
+# Add options to the OPTIONS variable. Most options should be defined in
+# the file /etc/logwatch/conf/logwatch.conf, but some are only for the
+# nightly cron run such as "--output mail" and should be set here.
+# Other options to consider might be "--format html" or "--encode base64".
+# See 'man logwatch' for more details.
+OPTIONS="--output mail"
+
+#Call logwatch
+$LOGWATCH_SCRIPT $OPTIONS
+
+exit 0

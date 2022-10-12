@@ -1,0 +1,98 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# and copy:
+#    Paweł Gołaszewski <blues@pld-linux.org>
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#######################################################
+## Copyright (c) 2008 Paweł Gołaszewski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+########################################################
+# This was written by:
+#    Paweł Gołaszewski <blues@pld-linux.org>
+########################################################
+
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Debug = $ENV{'LOGWATCH_DEBUG'} || 0;
+
+$AuthFailures = 0;
+$Startups = 0;
+$Shutdowns = 0;
+
+while (defined($ThisLine = <STDIN>)) {
+   if (
+      ( $ThisLine =~ m/^DEBUG: / ) or
+      ( $ThisLine =~ m/^ipc_init        : listening on socket:/ ) or
+      ( $ThisLine =~ m/^pam_sm_authenticate:/ ) or
+      ( $ThisLine =~ m/^pam_\w+\(\w+:auth\): / )
+   ) {
+      # We don't care about these
+   } elsif ( ($User,$Service,$Realm,$Mechanism,$Reason) = ($ThisLine =~ /^do_auth         : auth failure: \[user=(.*)\] \[service=([^ ]*)\] \[realm=([^ ]*)\] \[mech=([^ ]*)\] \[reason=(.*)\]$/) ) {
+      $AuthFailures++;
+      $AuthFailServiceCount{"$Service ($Mechanism)"}++;
+      $AuthFailRealmCount{"$Service ($Mechanism)"}{$Realm}++;
+      $AuthFail{"$Service ($Mechanism)"}{$Realm}{"$User - $Reason"}++;
+   } elsif ( $ThisLine =~ m/^detach_tty      : master pid is: \d+$/) {
+      $Startups++;
+   } elsif ( $ThisLine =~ m/^server_exit     : master exited: \d+$/) {
+      $Shutdowns++;
+   } else {
+      push @OtherList,$ThisLine;
+   }
+}
+
+##################################################################
+
+if ($Startups > 0) {
+   print "Startups: $Startups\n";
+}
+
+if ($Shutdowns > 0) {
+   print "Shutdowns: $Shutdowns\n";
+}
+
+if (keys %AuthFail) {
+   print "\nSASL Authentications failed $AuthFailures Time(s)\n";
+   foreach $Service (sort {$a cmp $b} keys %AuthFail) {
+      print "Service $Service - $AuthFailServiceCount{$Service} Time(s):\n";
+      foreach $Realm (sort {$a cmp $b} keys %{$AuthFail{$Service}} ) {
+         print "   Realm $Realm - $AuthFailRealmCount{$Service}{$Realm} Time(s):\n";
+         foreach $User (sort {$a cmp $b} keys %{$AuthFail{$Service}{$Realm}} ) {
+            print "      User: $User - $AuthFail{$Service}{$Realm}{$User} Time(s):\n";
+         }
+      }
+   }
+}
+
+if ($#OtherList >= 0) {
+   print "\n\n**Unmatched Entries**\n\n";
+   print @OtherList;
+}
+
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

@@ -1,0 +1,27 @@
+From: Willi Mann <willi@wm1.at>
+Date: Sat, 13 Aug 2011 14:26:39 +0200
+Subject: 00-debspecific-disable-su-reporting-in-secure.diff
+
+---
+ scripts/services/secure | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/scripts/services/secure b/scripts/services/secure
+index 25b47a4..b96d25a 100644
+--- a/scripts/services/secure
++++ b/scripts/services/secure
+@@ -354,11 +354,11 @@ while (defined($ThisLine = <STDIN>)) {
+    } elsif ($ThisLine =~ /^pam_pwdfile\[\d+\]: password too short or NULL/) {
+       $pwd_file_too_short++;
+    } elsif ( ($User,$Su) = ($ThisLine =~ /^su: ([^ ]+) to ([^ ]+) on \/dev\/ttyp([0-9a-z]+)/) ) {
+-      $Su_User{$User}{$Su}++;
++      #$Su_User{$User}{$Su}++; #disabled for debian: reported in pam_unix
+    } elsif ( ($Su,$User) = ($ThisLine =~ /^su: \(to ([^ ]+)\) ([^ ]+) on (?:none|(\/dev\/)?(pts\/|ttyp)([0-9]+))/) ) {
+-      $Su_User{$User}{$Su}++;
++      #$Su_User{$User}{$Su}++; #  -|-
+    } elsif ( ($Su,$User) = ($ThisLine =~ /^su\[\d+\]: Successful su for (\S+) by (\S+)/) ) {
+-      $Su_User{$User}{$Su}++;
++      #$Su_User{$User}{$Su}++; #  -|-
+    } elsif ($ThisLine =~ /^userhelper\[\d+\]: running '([^']+)' with ([^']+) privileges on behalf of '([^']+)'/) {
+       $Executed_app{"$1,$2,$3"}++;
+    } elsif ($ThisLine =~ /^polkitd\[\d+\]: Operator of unix-process:\d+:\d+ successfully authenticated as unix-user:([^ ]+) to gain ONE-SHOT authorization for action org\.freedesktop\..* for system-bus-name::[\d.]+ \[([^\]]*)\] \(owned by unix-user:(\w+)\)/) {

@@ -1,0 +1,71 @@
+#!/usr/bin/make -f
+# Sample debian/rules that uses debhelper.
+# GNU copyright 1997 to 1999 by Joey Hess.
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+export DESTDIR=$(CURDIR)/debian/logwatch
+
+SHELL=/bin/bash
+LOGDIR=$(DESTDIR)/etc/logwatch
+SHAREDIR=$(DESTDIR)/usr/share/logwatch
+LOGWATCHPL=$(SHAREDIR)/scripts/logwatch.pl
+
+%:
+	dh $@
+
+override_dh_install:
+
+	# Add here commands to install the package into debian/logwatch.
+	mkdir -p $(LOGDIR)
+	mkdir -p $(LOGDIR)/conf
+	mkdir -p $(LOGDIR)/conf/logfiles
+	mkdir -p $(LOGDIR)/conf/services
+	mkdir -p $(LOGDIR)/scripts
+	mkdir -p $(LOGDIR)/scripts/services
+	
+	# Remove "update" files
+	# find $(LOGDIR) -name "*.orig" -or -name "*.rej" -exec rm -f {} \;
+	
+	mkdir -p $(SHAREDIR)
+	cp -a scripts/ $(SHAREDIR)
+	cp -a lib/ $(SHAREDIR)
+
+	mkdir -p $(SHAREDIR)/default.conf
+	cp -a conf/* $(SHAREDIR)/default.conf
+	
+	mkdir -p $(SHAREDIR)/dist.conf
+	cp -a debian/dist.conf/* $(SHAREDIR)/dist.conf
+
+	# Move dist.conf files to default.conf in case they are missing there
+	for i in `find $(SHAREDIR)/dist.conf/ -type f`; do \
+		if [ ! -f $(SHAREDIR)/default.conf/$${i##$(SHAREDIR)/dist.conf/} ]; then \
+			mv $$i $(SHAREDIR)/default.conf/$${i##$(SHAREDIR)/dist.conf/}; \
+		fi \
+	done
+
+	# Fix permissions of scripts
+	chmod -R 0755 $(SHAREDIR)/scripts
+
+	mkdir -p $(DESTDIR)/usr/sbin
+
+#Ensure all configuration files have 0644
+	find $(SHAREDIR)/ -name "*.conf" -type f -exec chmod 0644 {} \;
+
+# Add #!/usr/bin/perl at the top of the scripts (mainly for debugging and avoiding lintian warnings)
+	for i in `find $(SHAREDIR)/scripts -type f `; do head -n1 $$i | grep -q '^#!/usr/bin/perl$$' || sed -e '1i #!/usr/bin/perl' -e '/#!\/usr\/bin\/perl -T/d' --in-place $$i;done
+
+	VERSION=$$(dpkg-parsechangelog -c1 -ldebian/changelog | grep "^Version" | grep git); \
+		if [ ! -z "$$VERSION" ]; then \
+			VERSION=$$( echo $$VERSION | perl -pe 's|.*git20(\d{2})(\d{2})(\d{2}).*|$$2/$$3/$$1|'); \
+			perl -pi -e "s|^(my .VDate = .)\d{2}/\d{2}/\d{2}(.;.*)|\$${1}$$VERSION\$$2|" $(LOGWATCHPL); \
+		fi
+
+
+	# Remove empty directories
+	find $(SHAREDIR) -depth -type d -empty -exec rmdir {} \;
+
+override_dh_installcron:
+	dh_installcron --name=00logwatch
+

@@ -1,0 +1,2149 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+#######################################################
+## Copyright (c) 2008 Kirk Bauer
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use diagnostics;
+use strict;
+
+use Logwatch ':sort';
+use Errno;
+
+# PrettyHost decomposes host names and IP addresses and
+# formats them to align vertically
+sub PrettyHost {
+   # $_[0] is the line to format
+   my $Line = $_[0];
+   # $_[1] is the length available
+   my $LineLength = $_[1];
+   #
+   if ((not defined $main::sendmail_prettyhost) or
+       ($main::sendmail_prettyhost == 0)) {
+      return($Line);
+   }
+   my ($Name, $Addr, $Other) = ($Line =~ /^\s*(.*?)\s*(\[[\d\.:]*\])\s*(.*?)\s*$/);
+   if (index($Line, "\[") < 0) {
+      $Name = $Line;
+   }
+   if (not defined $Name) {$Name=""};
+   if (not defined $Addr) {$Addr=""};
+   if (not defined $Other) {$Other=""};
+   if ($Other ne "") {
+      $Name = $Name . " " . $Other;
+   }
+   # From LineLength, we will use 18 chars for one space
+   # and a full IPv4 address
+
+   if (length($Line) > $LineLength) {
+      while ((length($Name) > $LineLength-21) and (($Name =~ tr/\./\./) > 1) ) {
+         $Name =~ s/[^\.]*\.(.*)/$1/;
+      }
+      $Name = "..." . $Name;
+   }
+   sprintf ("%*s %-17s", 18-$LineLength, $Name, $Addr);
+}
+
+# PrettyTimes simply formats the lines with counts "Time(s)" to
+# align with the results of the PrettyHost routine
+
+sub PrettyTimes {
+   # $_[0] is the event to format (string)
+   my $Line = $_[0];
+   # $_[1] is the number of times it occurs (integer)
+   my $Amount = $_[1];
+   #
+   if ((not defined $main::sendmail_prettyprint) or
+       ($main::sendmail_prettyprint == 0)) {
+      printf "\n%s: %d Time%s", $Line, $Amount, ($Amount == 1) ? "" : "s";
+   } else {
+      my $line_length = 72-length($Line);
+      printf "\n%s %*d Time%s", $Line, ($line_length > 0)? $line_length : 0,
+         $Amount, ($Amount == 1) ? "" : "s";
+   }
+   return 0;
+}
+
+
+
+my $LogwatchDetail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Debug = $ENV{'LOGWATCH_DEBUG'} || 0;
+
+my $sendmail_milterheaderstocount = $ENV{'sendmail_milterheaderstocount'} || "";
+my @MilterHeadersToCount = split(/\|/, $sendmail_milterheaderstocount);
+my $MatchFilter = $ENV{'sendmail_matchfilter'} || "";
+my $ReportFilter = $ENV{'sendmail_reportfilter'} || "";
+
+# Extract formatting directives.  If Sendmail_PrettyHost is set,
+# assume that Sendmail_PrettyPrint is also desired
+our $sendmail_prettyhost = $ENV{'sendmail_prettyhost'};
+if (not defined $sendmail_prettyhost) {$sendmail_prettyhost = 1};
+our $sendmail_prettyprint = $ENV{'sendmail_prettyprint'};
+if ((not defined $sendmail_prettyprint) || $sendmail_prettyhost) {$sendmail_prettyprint = 1};
+
+my $Detail = $ENV{'sendmail_detail'};
+
+if (not defined $Detail) {
+   print "\n\nDetail Level of output is inherited from conf/logwatch.conf."
+      if $Debug;
+   $Detail = $LogwatchDetail;
+} else {
+   print "\n\nUsing Detail Level = $Detail from conf/services/sendmail.conf"
+      if $Debug;
+}
+
+#print "\nSee file conf/services/sendmail.conf on how to customize output.";
+
+# The following variables are auto-increment counts, so are initialized
+my $AddrRcpts =          my $BytesTransferred =   my $CantCreateOutput =
+my $DaemonThrottle =     my $LoadAvgQueueSkip =   my $LoadAvgReject =
+my $MsgsNoRcpt =
+my $MsgsSent =           my $NoMilterFilters =    my $NoMoreSpace =
+my $OutdatedAliasdb =
+my $OverSize =           my $OverSizeBytes =      my $RelayLocalhost =
+my $RemoteProtocolError =my $SendmailStarts =
+my $SendmailStopped =    my $TooManyRcpts =       my $XS4ALL =
+0;
+
+
+# The following variables are always initialized before usage, so they are merely declared here.
+# (Someday it might be useful to reduce their scope, but most of them are used in the large
+# if..elsif structure, making that hard.
+my (
+$Address,                $Arg,                    $Attack,
+$Auth,
+$BlSite,                 $Bytes,                  $CommonName,
+$DeliverStat,            $Dest,                   $DetailReason,
+$Domain,                 $Error,                  $ErrorCount,
+$ETRN,                   $File,                   $Forward,
+$FromUser,               $Header,                 $HeaderMod,
+$Host,                   $IP,
+$LastIndex,              $LastIndex2,
+$Load,                   $Luser,                  $MailerName,
+$MailerString,           $MailerType,             $NewQueueID,
+$NoCommonName,
+$NumRcpts,               $Owner,                  $QueueID,
+$Reason,                 $RejCmd,                 $Relay,
+$RelayDeniedCount,       $RelayHost,              $RelayName,
+$Ruser,                  $Size,                   $Source,
+$StarttlsCipherEntry,    $StarttlsCipherType,     $StarttlsMode,
+$StarttlsNumBits,        $StarttlsReason,         $StarttlsVerify,
+$StatError,              $StatFile,               $Temp,
+$Temp1,                  $ThisLine,               $ThisOne,
+$TimeoutSend,            $TimeoutSendWarning,     $TLSFile,
+$TLSFrom,
+$TLSReason,              $TotalBytes,             $TotalNum,
+$ToUser,                 $User,                   $Usr,
+$Warning,                $Directory,              $Cause
+);
+
+
+# The following arrays and hashes need to have file-wide scopes
+my @SizeDist;
+
+my (
+%Abuse,                  %AddressError,           %AttackAttempt,
+%AUTHfailure,            %AUTHnouser,             %AuthWarns,
+%BadAuth,                %BadRcptThrottle,        %BlackHoled,
+%BlackHoles,             %CheckMailReject,        %CheckRcptReject,
+%CollectError,           %CommandUnrecognized,    %DisabledMailbox,
+%DNSMap,
+%DomainErrors,           %DummyConnection,        %ETRNs,
+%ForwardErrors,          %KnownSpammer,           %LargeHdrs,
+%LargeMsgs,              %LastCmd,
+%LoadAvg,                %LostInputChannel,
+%LostQueueFile,          %LowSpace,               %MailBomber,
+%MailBomberConn,         %Mailers,                %MailRejected,
+%MilterDeferrals,        %MilterErrors,
+%MilterHeaderCount,      %Msgs,                   %NotLocal,
+%OtherList,              %PREGreeting,            %PREGreetingQueue,
+%Quarantined,
+%RelayDenied,            %RelayReject,            %ReturnReceipts,
+%RuleSets,               %SaslError,              %SenderIDResults,
+%SentTimeouts,           %SortedUsers,
+%SPFResults,             %Starttls,               %StarttlsCert,
+%StarttlsCipher,         %StatDeferred,           %StatFileError,
+%StatRejected,           %StatRejectedLog,
+%SysErr,                 %Timeouts,               %TLSAcceptFailed,
+%TLSConnectFailed,       %TLSFileMissing,         %ToList,
+%TooManyHops,            %UnknownUsers,           %UnknownUsersCheckRcpt,
+%WUnsafe
+);
+
+# Initialize $SizeDist array
+for my $i (0..9) {
+   $SizeDist[$i]{'Num'} = 0;
+   $SizeDist[$i]{'Bytes'} = 0;
+}
+
+# QueueID formats: in 8.11 it was \w{7}\d{5}, in 8.12+ it is \w{8}\d{6}
+# Also, PID can now be up to seven digits in 64-bit systems
+my $QueueIDFormat = "(?:\\w{7,9}\\d{5,7}|NOQUEUE)";
+
+# ENOENT refers to "no such file or directory"
+my $ENOENT = Errno::ENOENT();
+
+while (defined($ThisLine = <STDIN>)) {
+   # not all log entries have a queue id
+   ($QueueID) = ($ThisLine =~ /^($QueueIDFormat): /o );
+   if (defined $QueueID) {$ThisLine =~ s/^$QueueID: //;}
+
+# $MatchFilter is a variable that is set by setting the $Sendmail_MatchFilter variable
+# in the conf/services/sendmail.conf file.  It is executed here, before any other
+# matching statements
+eval $MatchFilter;
+if ($@) {
+   print $@;
+   print "While processing MatchFilter:\n$MatchFilter\n";
+}
+# $ThisLine might have been reset (undef, or empty string) in $MatchFilter
+next unless $ThisLine;
+
+   if (
+      # informational statements of little value
+      # file=alias.c, LogLevel>7, LOG_NOTICE
+      ( $ThisLine =~ /^alias database [^ ]* (auto)?rebuilt by/ ) or
+      # file=alias.c, LogLevel>7, LOG_INFO
+      ( $ThisLine =~ /[0-9]* aliases, longest [0-9]* bytes, [0-9]* bytes total/ ) or
+      # file=util.c, LogLevel>9, LOG_INFO
+      ( $ThisLine =~ /^started as: / ) or
+      # file=daemon.c, LogLevel>8, LOG_INFO
+      ( $ThisLine =~ /accepting new messages \(again\)/ ) or
+      # the following is captured later, as detailed info is also printed
+      # file=collect.c, LogLevel>1, LOG_WARNING
+      ( $ThisLine =~ /^collect: premature EOM: / ) or
+      # the following is captured later, as detailed info is also printed
+      # file=milter.c, LogLevel>0, LOG_INFO
+      ( $ThisLine =~ /^Milter \(.*\): to error state$/ ) or
+
+      # milter statements
+      # file=milter.c, LogLevel>8, LOG_INFO
+      ( $ThisLine =~ /^Milter message: body replaced$/ ) or
+      # file=milter.c, LogLevel>9, LOG_INFO
+      ( $ThisLine =~ /^Milter accept: message$/ ) or
+      # file=milter.c, LogLevel>9, LOG_INFO
+      #( $ThisLine =~ /^Milter \(\w*\): init success to / ) or
+      # milter name may contain none \w symbols such as hyphen
+      ( $ThisLine =~ /^Milter \(\S*\): init success to / ) or
+      # file=milter.c, LogLevel>9, LOG_INFO
+      ( $ThisLine =~ /^Milter: connect/ ) or
+      # file=milter.c, LogLevel>10, LOG_INFO
+      ( $ThisLine =~ /^Milter \(\w*\): abort filter/ ) or
+      # file=milter.c, LogLevel>10, LOG_INFO
+      ( $ThisLine =~ /^milter=\w*, action=\w*, accepted/ ) or
+      # file=milter.c, LogLevel>10, LOG_INFO
+      ( $ThisLine =~ /^milter=\w*, action=\w*, tempfail/ ) or
+      # file=milter.c, LogLevel>12, LOG_INFO
+      ( $ThisLine =~ /^milter=\w*, action=\w*, continue/ ) or
+      # the following is captured later in srvrsmtp.c, except for milter service name
+      # file=milter.c, LogLevel>12, LOG_INFO
+      ( $ThisLine =~ /^milter=\w*, (reject|discard)/ ) or
+      # file=milter.c, LogLevel>14, LOG_INFO
+      ( $ThisLine =~ /^Milter: (rcpts|senders?):/ ) or
+      # file=milter.c, LogLevel>17, LOG_INFO
+      ( $ThisLine =~ /^Milter \(\w*\): (headers|body), sen[dt]/ ) or
+      # file=milter.c, LogLevel>18, LOG_INFO
+      ( $ThisLine =~ /^Milter \(\w*\): quit filter/ ) or
+      # file=milter.c, LogLevel>21, LOG_INFO
+      ( $ThisLine =~ /^Milter \(\w*\): time command / ) or
+      # file=milter.c, LogLevel>21, LOG_INFO
+      ( $ThisLine =~ /^Milter \(\w*\): header, / ) or
+
+      # the following two return errors that are caught in the "to=" statements
+      # file=srvrsmtp.c, LogLevel>3, LOG_INFO
+      ( $ThisLine =~ /^Milter: data, reject=55[0-9] 5\.7\.1 (.*)/ ) or
+      # file=srvrsmtp.c, LogLevel>3, LOG_INFO
+      ( $ThisLine =~ /^Milter: data, discard$/ ) or
+      # file=srvrsmtp.c, LogLevel>9, LOG_INFO
+      ( $ThisLine =~ /^Sending .* to Milter$/ ) or
+      # file=srvrsmtp.c, LogLevel>3, LOG_INFO
+
+      # SMTP codes
+      # status code 0XX is informational
+      ( $ThisLine =~ /^--- 0[0-9]{2}(-| )/ ) or
+      # status code 2XX is success - but hold onto the Hello response
+      ( ( $ThisLine =~ /^--- 2[0-9]{2}(-| )/ ) and not
+          ( $ThisLine =~ /^--- 250[ -].* Hello .*, pleased to meet you$/ )) or
+      # status codes 4XX are for transient failures
+      ( ( $ThisLine =~ /^--- 4[0-9]{2}(-| )/ ) and not
+         # but note bad commands, because we'll need it later
+         ( $ThisLine =~ /^--- 421 4\.7\.0 .* Too many bad commands; closing connection$/))  or
+      # status code 334 is used for STARTTLS verification
+      ( $ThisLine =~ /^--- 334 / ) or
+      # status code 354 used to request data
+      ( $ThisLine =~ /^--- 354 Enter mail, end with \"\.\" on a line by itself/ ) or
+      # invalid smtp commands detected later ($RejCmd)
+      ( $ThisLine =~ /^--- 502 5(\.[0-9]){2} Sorry, we do not allow this operation$/ ) or
+      # Need RCPT most likely because of incorrect RCPT command, in which case ignore it
+      ( ( $ThisLine =~ /^--- 503 5(\.[0-9]){2} Need RCPT \(recipient\)$/ ) and
+          ( $Msgs{$QueueID}{"BadRCPT"} > 0)) or
+      ( $ThisLine =~ /^--- 530 5\.7\.0 Authentication required$/ ) or
+      # AUTH failure detected later with %AUTHfailure
+      ( $ThisLine =~ /^--- 535 5\.7\.0 authentication failed$/ ) or
+      # Mailbox disabled detected later by ruleset=check_rcpt
+      ( $ThisLine =~ /^--- 550 5(\.[0-9]){2} .* Mailbox disabled for this recipient$/ ) or
+      # bogus HELO detected later by rulteset=check_rcpt
+      ( $ThisLine =~ /^--- 550 5(\.[0-9]){2} .* bogus HELO name used/ ) or
+      # Commands rejected are from greet_pause or milter
+      ( $ThisLine =~ /^--- 550 5(\.[0-9]){2} Command rejected$/ ) or
+      # User unknown detected later by ruleset=check_rcpt
+      ( $ThisLine =~ /^--- 550 5(\.[0-9]){2} .*\.\.\. User unknown/ ) or
+      # Relaying denied detected later by ruleset=check_rcpt
+      ( $ThisLine =~ /^--- 550 5(\.[0-9]){2} .*\.\.\. Relaying denied/ ) or
+      # Access denied detected later by ruleset=check_relay
+      ( $ThisLine =~ /^--- 550 5(\.[0-9]){2} .*\.\.\. Access denied/ ) or
+      # Domain errors detected later by ruleset=check_mail
+      ( $ThisLine =~ /^--- 553 5(\.[0-9]){2} .*\.\.\. Domain of sender address .* does not exist$/ ) or
+      ( $ThisLine =~ /^--- 553 5(\.[0-9]){2} .*\.\.\. Domain name required for sender address/ ) or
+      # the following used by milter, which is detected later
+      ( $ThisLine =~ /^--- 554 5\.7\.1 / ) or
+      # the following used by greet_pause feature
+      ( $ThisLine =~ /^--- 554 .* not accepting messages/ ) or
+      # detected by "invalid domain name" statement elsewhere
+      ( $ThisLine =~ /^--- 501 5(\.[0-9]){2} Invalid domain name$/ ) or
+      # out-of-sequence commands
+      ( $ThisLine =~ /^--- 503 5(\.[0-9]){2} Polite people say HELO first$/ ) or
+      ( $ThisLine =~ /^--- 501 5(\.[0-9]){2} HELO requires domain address$/ ) or
+      ( $ThisLine =~ /^--- 501 5(\.[0-9]){2} EHLO requires domain address$/ ) or
+      ( $ThisLine =~ /^--- 503 5(\.[0-9]){2} Need MAIL command$/ ) or
+      ( $ThisLine =~ /^--- 503 5(\.[0-9]){2} Need MAIL before RCPT$/ ) or
+      # these are the valid commands
+      ( $ThisLine =~ /<-- (EHLO|HELO|STARTTLS|MAIL FROM|RCPT TO|DATA|RSET|QUIT|NOOP)/i ) or
+      ( $ThisLine =~ /<-- (ETRN|VERB|EXPN|VRFY|HELP|AUTH|NOOP|VERB)/i ) or
+      # file=daemon.c, LogLevel>11, LOG_INFO
+      ( $ThisLine =~ /SMTP outgoing connect on/ ) or
+      # file=envelope.c, LogLevel>9, LOG_INFO
+      ( $ThisLine =~ /done; delay=[0-9:\+]*, ntries=/ ) or
+      # file=alias.c, LogLevel>10, LOG_INFO
+      ( $ThisLine =~ /^alias.*=>/ ) or
+      # file=main.c, LogLevel>9, LOG_INFO
+      ( $ThisLine =~ /^connect from / ) or
+      # file=srvrsmtp.c, LogLevel>11, LOG_INFO
+      ( $ThisLine =~ /^AUTH: available mech=/ ) or
+# we should probably count the following...
+      # file=deliver.c, LogLevel>9, LOG_INFO
+      ( $ThisLine =~ /^AUTH=client, relay=.*, mech=.*, bits=\d*/ ) or
+      # file=srvrsmtp.c, LogLevel>11, LOG_INFO
+      ( $ThisLine =~ /^AUTH=server, relay=.*, authid=.*, mech=.*, bits=\d*/ ) or
+
+# we should probably count the following...
+      # file=deliver.c, LogLevel>4, LOG_INFO
+      ( $ThisLine =~ /^discarded$/ ) or
+
+      # STARTTLS
+      # file=tls.c, LogLevel>14, LOG_INFO
+      ( $ThisLine =~ /^STARTTLS=(server|client), get_verify:/ ) or
+      # file=tls.c, LogLevel>11, LOG_INFO
+      ( $ThisLine =~ /^STARTTLS=(server|client), cert-subject=/ ) or
+      # file=tls.c, LogLevel>13, LOG_INFO
+      ( $ThisLine =~ /^STARTTLS=(server|client), Diffie-Hellman init, key=/ ) or
+      # file=tls.c, LogLevel>12, LOG_INFO
+      ( $ThisLine =~ /^STARTTLS=(server|client), init=1/ ) or
+      # file=deliver.c, LogLevel>13, LOG_INFO
+      ( $ThisLine =~ /^STARTTLS=client, start=ok$/ ) or
+      # file=readcf.c, LogLevel>9, LOG_NOTICE, starting in 8.16.1
+      #   because the features string can be many things, we ignore those
+      #   strings that are not known errors.  (Other error strings are
+      #   possible, but they don't match because they have more arguments.)
+      ( $ThisLine =~ m/^tls_(srv|clt)_features=
+          (?!too_short|only_one_of_CertFile\/KeyFile_specified)[^,]*,
+          \ relay=([^\ ])*\ \[.*\]$/x ) or
+      # file=tls.c, LogLevel>13, LOG_DEBUG, starting in 8.16.1
+      ( $ThisLine =~ /engine=.*, path=.*, ispre=\d+, pre=\d+, initialized=\d+$/ ) or
+      # the following is described in tls.c as a bug in OpenSSL, and
+      # recommends that the error message be ignored (last checked on 8.15.2)
+      # file=tls.c, LogLevel>15, LOG_WARNING
+      ( $ThisLine =~ /^STARTTLS=(server|client), SSL_shutdown not done$/ ) or
+      # and something similar occurs for the one sending the shutdown after the
+      # connection is already closed by the other side
+      # file=tls.c, LogLevel>11, LOG_WARNING
+      ( $ThisLine =~ /^STARTTLS=(server|client), SSL_shutdown failed/ ) or
+      # and similarly, an SSL write may fail because the remote host shuts down
+      # the connection first (ECONNRESET refers to "Connection reset by peer")
+      # file=sfsasl.c, LogLevel>8, LOG_WARNING
+      ( $ThisLine =~ /^STARTTLS: write error=syscall error \(-1\), errno=${\Errno::ECONNRESET}/ ) or
+      # file=srvsmtp.c, LogLevel>5, LOG_WARNING
+      ( $ThisLine =~ /^STARTTLS=server, error: accept failed=-1, reason=unknown, SSL_error=5, errno=${\Errno::ECONNRESET}, retry=/ ) or
+      # and yet another symptom of a connection shut down (EPIPE refers to "Broken pipe")
+      # file=srvsmtp.c, LogLevel>5, LOG_WARNING
+      ( $ThisLine =~ /^STARTTLS=server, error: accept failed=-1, reason=unknown, SSL_error=5, errno=${\Errno::EPIPE}, retry=/ ) or
+      # the following is a detailed SSL error log (from tlslogerr)
+      # always preceded by a more user-friendly error message
+      # file=srvrsmtp.c, LogLevel>8, LOG_WARNING
+      ( $ThisLine =~ /STARTTLS=(?:\w*): \d*:error:\w{8}:[^:]*:[^:]*:([^:]*):/ ) or
+      # the following is a log message introduced in 8.13.6
+      # file=sfsasl.c, LogLevel>14, LOG_INFO
+      # tls_retry errors are either transient, or additional log info is issued and parsed
+      ( $ThisLine =~ /^STARTTLS=(server|client|read|write), info: fds=\d+\/\d+, err=\d$/ ) or
+      # Messages from ruleset try_tls, these can be ignored
+      # ruleset=try_tls, arg1=..., relay=..., reject=550 5.7.1 ... do not try TLS with ...
+      ( $ThisLine=~ /^ruleset=try_tls, arg1=(.*?).*?, reject=550.*do not try TLS with.*/ ) or
+      # AUTH offered, but not authenticated
+      # file=sendmail.cf
+      ( $ThisLine =~ /^ruleset=trust_auth, .* reject=550 5\.7\.1 .*\.\.\. not authenticated$/  ) or
+      # file=queue.c, LogLevel>8, LOG_INFO
+      ( $ThisLine =~ /^runqueue: Flushing queue from/ ) or
+      # file=daemon.c, LogLevel>8, LOG_INFO
+      ( $ThisLine =~ /^accepting connections again for daemon / ) or
+# do we want to count these?
+      # file=srvrsmtp.c, LogLevel>-1, LOG_INFO
+      ( $ThisLine =~ /probable open proxy: / ) or
+      # the following return error is caught in the "to=" statement
+      ( $ThisLine =~ /^makeconnection \(.*\) failed: / ) or
+
+      # LOG_DEBUG statements
+      # file=queue.c, LogLevel>79, LOG_DEBUG
+      ( $ThisLine =~ /^queueup / ) or
+      # file=queue.c, LogLevel>69, LOG_DEBUG
+      ( $ThisLine =~ /^runqueue .*, pid=\d*, forkflag=\d*$/ ) or
+      # file=queue.c, LogLevel>76, LOG_DEBUG
+      ( $ThisLine =~ /^dowork, pid=\d*$/ ) or
+      # file=queue.c, LogLevel>76, LOG_DEBUG
+      ( $ThisLine =~ /^doworklist, pid=\d*$/ ) or
+      # file=queue.c, LogLevel>19, LOG_DEBUG
+      ( $ThisLine =~ /^locked$/ ) or
+      # file=queue.c, LogLevel>19, LOG_DEBUG
+      ( $ThisLine =~ /^changed$/ ) or
+      # file=queue.c, LogLevel>19, LOG_DEBUG
+      ( $ThisLine =~ /^too young \(.*\)$/ ) or
+      # file=queue.c, LogLevel>93, LOG_DEBUG
+      ( $ThisLine =~ /^assigned id/ ) or
+      # file=queue.c, LogLevel>87, LOG_DEBUG
+      ( $ThisLine =~ /^unlock$/ ) or
+      # file=main.c, LogLevel>78, LOG_DEBUG
+      ( $ThisLine =~ /^finis, pid=\d*$/ ) or
+      # file=main.c, LogLevel>79, LOG_DEBUG
+      ( $ThisLine =~ /^interrupt$/ ) or
+      # file=main.c, LogLevel>93, LOG_DEBUG
+      ( $ThisLine =~ /^disconnect level \d*$/ ) or
+      # file=main.c, LogLevel>71, LOG_DEBUG
+      ( $ThisLine =~ /^in background, pid=\d*$/ ) or
+      # file=util.c, LogLevel>98, LOG_DEBUG
+      ( $ThisLine =~ /^unlink / ) or
+      # file=deliver.c, LogLevel>80, LOG_DEBUG
+      ( $ThisLine =~ /^sendenvelope, flags=0x[0-9a-fA-F]*$/ ) or
+      # file=envelope.c, LogLevel>84, LOG_DEBUG
+      ( $ThisLine =~ /^dropenvelope, e_flags=0x[0-9a-fA-F]*, OpMode=., pid=\d*$/ ) or
+      # for the following, any return code is still at LogLevel>97, but we only
+      # check for ENOENT return codes, as others are maybe worth looking into
+      # file=queue.c, LogLevel>97, LOG_DEBUG
+      ( $ThisLine =~ /$QueueIDFormat: unlink-fail $ENOENT/o ) or
+      # dumpfd() output
+      ( $ThisLine =~ /\d+: fl=0x\d+, mode=\d+/ ) or
+      # generic DEBUG statement
+      ( $ThisLine =~ /^DEBUG: / )
+
+
+   ) {
+      # We don't care about these statements above
+
+   # file=srvrsmtp.c
+   } elsif ( ($RelayHost) = ($ThisLine =~ /^--- 250[ -].* Hello (.*), pleased to meet you$/) ) {
+      # record the host for errors on SMTP commands
+      $Msgs{$QueueID}{"Relay"} = $RelayHost;
+      $Msgs{$QueueID}{"BadRCPT"} = 0;
+   # file=headers.c, LogLevel>-1, LOG_INFO
+   } elsif ( ($FromUser, $Bytes, $NumRcpts, $RelayHost) =
+           ($ThisLine =~ /^from=(.*?), .*size=([0-9]+),.*nrcpts=([0-9]+).*relay=(.*)/) ) {
+      if ($NumRcpts > 0) {
+         $MsgsSent++;
+         $AddrRcpts += $NumRcpts;
+         $BytesTransferred += $Bytes;
+         $MailBomber{$RelayHost} += $NumRcpts;
+         $MailBomberConn{$RelayHost}++;
+         if ($Bytes <= 10240) {
+            $SizeDist[0]{'Num'}++;
+            $SizeDist[0]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 20480) {
+            $SizeDist[1]{'Num'}++;
+            $SizeDist[1]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 51200) {
+            $SizeDist[2]{'Num'}++;
+            $SizeDist[2]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 102400) {
+            $SizeDist[3]{'Num'}++;
+            $SizeDist[3]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 512000) {
+            $SizeDist[4]{'Num'}++;
+            $SizeDist[4]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 1048576) {
+            $SizeDist[5]{'Num'}++;
+            $SizeDist[5]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 2097152) {
+            $SizeDist[6]{'Num'}++;
+            $SizeDist[6]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 5242880) {
+            $SizeDist[7]{'Num'}++;
+            $SizeDist[7]{'Bytes'} += $Bytes;
+         } elsif ($Bytes <= 10485760) {
+            $SizeDist[8]{'Num'}++;
+            $SizeDist[8]{'Bytes'} += $Bytes;
+         } else {
+            $SizeDist[9]{'Num'}++;
+            $SizeDist[9]{'Bytes'} += $Bytes;
+         }
+      } else {
+         $MsgsNoRcpt++;
+      }
+
+      # Add info from message to a hash
+      $Msgs{$QueueID}{"Relay"} = $RelayHost;
+      $Msgs{$QueueID}{"FromUser"} = $FromUser;
+      $Msgs{$QueueID}{"Size"} = $Bytes;
+
+   # file=deliver.c, LogLevel>-1, LOG_INFO
+   } elsif ( ($ToUser, $MailerString, $DeliverStat) = ($ThisLine =~ /^to=(.*?), (.*)stat=(.*)/ ) ) {
+      if ( $DeliverStat =~ /^Sent/ ) {
+         ( ($MailerType) = ( $MailerString =~ /mailer=(.*?),/));
+         ( ($RelayName) = ( $MailerString =~ /relay=(.*?),/));
+         if (not defined $MailerType) {
+            $MailerType = "(unspecified)";
+         }
+         $MailerType =~ s/^\s*$/\(unspecified\)/;
+         # remove the entries from MSP (Mail Submission Program) relay to
+         #    localhost
+         if (($MailerType =~ /^relay$/) && (defined $RelayName) &&
+                  ($RelayName =~ /\[127\.0\.0\.1\]/)) {
+            $RelayLocalhost++;
+         } else {
+            $Mailers{$MailerType}++;
+         } # if $MailerType !~ /^relay$/ ...
+
+         #This the Top X Email Addresses seen matching -mgt
+         #Build address hash
+         my $CleanTo = $ToUser;
+         $CleanTo =~ s/\<//g;
+         $CleanTo =~ s/\>//g;
+         $CleanTo =~ s/\"[\w\s]+\"\s?//g;
+         $CleanTo =~ tr/A-Z/a-z/;
+         if (($CleanTo =~ m/\w+\@.+\,\w+/) && (defined $RelayName) &&
+               ($RelayName !~ m/\[127\.0\.0\.1\]/)) {
+            my @CleanList = split(/,/, $CleanTo);
+            for my $ListAddr (@CleanList) {
+               $ToList{$ListAddr}++;
+            }
+         } elsif  (($CleanTo =~ m/\w+\@[\w\.]+/) && (defined $RelayName) &&
+               ($RelayName !~ m/\[127\.0\.0\.1\]/)) {
+            $ToList{$CleanTo}++;
+         } elsif ($CleanTo =~ m/\w+/) {  # Match a simple name
+            $ToList{$CleanTo}++;
+         } #Else ignore it
+
+         if (defined $Msgs{$QueueID}{"Size"}) {
+            if ($Msgs{$QueueID}{"Size"} > 5242880) {  #10485760
+               $LargeMsgs{$Msgs{$QueueID}{"FromUser"} . " \-\> " .$ToUser}++;
+            } # if size > 5242880
+         } # if defined
+      } elsif ( $DeliverStat =~ /^queued$/ ) {
+      # do nothing if being queued
+      } elsif ( ($Reason) = ( $DeliverStat =~ /^Deferred: (.*)/ ) ) {
+          $StatDeferred{$Reason}{$ToUser}++;
+      }  elsif ( $DeliverStat =~ /^Please try again later$/ ) {
+          $StatDeferred{"Milter"}{$ToUser}++;
+      }  elsif ( ($Reason) = ( $DeliverStat =~ /(.*)/ ) ) {
+          $StatRejected{$Reason}{$ToUser}++;
+          $StatRejectedLog{$Reason}{$QueueID}++;
+      }
+   } elsif ( ($NewQueueID, $Reason) = ( $ThisLine =~ /^($QueueIDFormat): (?:return to sender|sender notify|postmaster notify|DSN): (.*)/o )) {
+      if (defined $StatRejectedLog{$Reason}{$QueueID}) {
+          # this is a type of error that has been logged, but it is creating a new message
+          $Msgs{$NewQueueID}{"Relay"} = $Msgs{$QueueID}{"Relay"};
+          $Msgs{$NewQueueID}{"Size"} = $Msgs{$QueueID}{"Size"};
+          $Msgs{$NewQueueID}{"FromUser"} = "system_notify";
+      } elsif ($Reason =~ /^Unable to deliver mail$/) {
+          $StatRejected{"Unable to deliver mail"}{"system notify"}++;
+      # Return Receipts from successful delivery
+      } elsif ($Reason =~ /^Return receipt$/) {
+         $ReturnReceipts{$Msgs{$QueueID}{"FromUser"}}++;
+      # Timeouts
+      } elsif ($Reason =~ /^(Warning: could not send message for past .*)/ ) {
+          $SentTimeouts{$Reason}++;
+      } elsif ($Reason =~ /^(Cannot send message for .*)/ ) {
+          $SentTimeouts{$Reason}++;
+      }
+
+   # These are transient errors
+   } elsif (($Reason) = ($ThisLine =~ /^Milter: (?:data|to=.*|from=.*), reject=4\d\d (?:\d\.\d\.\d )?(.*)/) ) {
+      $MilterDeferrals{$Reason}++;
+
+   # file=deliver.c, LogLevel>4, LOG_INFO
+   } elsif ( ($NewQueueID, $Owner) = ( $ThisLine =~ /($QueueIDFormat): clone: owner=(.*)/o ) ) {
+      $Msgs{$NewQueueID}{"FromUser"} = $Owner;
+   # file=deliver.c, LogLevel>4, LOG_INFO (versions 8.11 and earlier)
+   } elsif ( ($NewQueueID, $Owner) = ( $ThisLine =~ /^clone ($QueueIDFormat), owner=(.*)/o ) ) {
+      $Msgs{$NewQueueID}{"FromUser"} = $Owner;
+   # file=main.c, LogLevel>-1, LOG_INFO
+   } elsif ( $ThisLine =~ /^starting daemon/) {
+      $SendmailStarts++;
+      $SendmailStopped = 0;
+   # file=daemon.c, LogLevel>3, LOG_INFO
+   } elsif ( $ThisLine =~ /^restarting .* due to/) {
+      $SendmailStarts++;
+      $SendmailStopped = 0;
+   # file=daemon.c, LogLevel>9, LOG_INFO
+   } elsif ( $ThisLine =~ /^stopping daemon, reason=/ ) {
+      $SendmailStopped = 1;
+   # After some testing this was removed and EOM is ignored -mgt
+   # file=collect.c, LogLevel>1, LOG_WARNING
+   #} elsif ( ($Reason) = ($ThisLine =~ /^collect: premature EOM: (.*)/) ) {
+   #   if (defined $Msgs{$QueueID}{"Relay"}) {
+   #      $Source = "From " . $Msgs{$QueueID}{"Relay"};
+   #   } else {
+   #      $Source = "Processing $QueueID";
+   #   }
+   #   $CollectError{$Reason}{$Source}++;
+   # file=collect.c, LogLevel>0, LOG_NOTICE
+   } elsif ( ($Reason, $Source) = ($ThisLine =~ /collect: (unexpected close|I\/O error|read timeout) on connection from (.*)?, /) ) {
+      $CollectError{$Reason}{$Source}++;
+   # file=collect.c, LogLevel>6, LOG_NOTICE
+   } elsif (($Size) = ($ThisLine =~ /^message size \(([0-9]+)\) exceeds maximum/)) {
+      $OverSize++;
+      $OverSizeBytes += $Size;
+   # file: sendmail.cf
+   } elsif ( ($User) = ($ThisLine =~ /^ruleset=check_rcpt, arg1=([^,]*), relay=[^,]*, reject=550\s*[\d.]*\s*[^ ]*\.\.\. Mailbox disabled for this recipient/) ) {
+      $DisabledMailbox{$User}{$QueueID}++;
+      $Msgs{$QueueID}{"BadRCPT"}++;
+   # test for unknown relay users (users we would have relayed elsewhere)
+   # file: sendmail.cf
+   } elsif ( ($User) = ($ThisLine =~ /^ruleset=check_rcpt, arg1=(.*?), .*\.\.\. User unknown$/) ) {
+      $UnknownUsersCheckRcpt{$User}{$QueueID}++;
+      $Msgs{$QueueID}{"BadRCPT"}++;
+   } elsif ( ($User) = ($ThisLine =~ /^(.*)\.\.\. (User unknown|No such user( here)?)$/i) ) {
+      $UnknownUsers{lc $User}{$QueueID}++;
+      $Msgs{$QueueID}{"BadRCPT"}++;
+   # file: sendmail.cf
+   } elsif ($ThisLine =~ /^--- 553 5\.1\.3 .* User address required$/) {
+      $UnknownUsers{"(unspecified)"}{$QueueID}++;
+   # file: sendmail.cf
+   } elsif ( ($Dest,$Relay) = ($ThisLine =~ /^ruleset=check_rcpt, arg1=([^,]*), relay=([^,]*)(?: \(may be forged\))?, reject=550\s*[\d.]*\s*.*\.\.\. Relaying denied/) ) {
+      $RelayDenied{$Relay}{$Dest}++;
+      $Msgs{$QueueID}{"BadRCPT"}++;
+
+   } elsif ( ($Auth) = ($ThisLine =~ /^--- 504 5\.3\.3 AUTH mechanism (.*) not available$/) ) {
+      $BadAuth{$Auth}++;
+   # file=sendmail.cf
+   } elsif ( ($User) = ($ThisLine =~ /^--- 553 5(?:\.\d){2} (.*)\.\.\. Hostname required$/) ) {
+      $DomainErrors{$Msgs{$QueueID}{"Relay"}}{$User . " (missing)"}++;
+   # file: sendmail.cf
+   } elsif ( ($User, $RelayHost) = ($ThisLine =~ /^ruleset=check_(?:mail|rcpt), arg1=(.*), relay=(.*), reject=451\s*[\d.]*\s*Domain of sender address .* does not resolve/) ) {
+   # I don't think we should include this, because it is a temporary error
+   #   $DomainErrors{$RelayHost}{$User . ": (does not resolve)"}++;
+   # file: sendmail.cf
+   } elsif ( ($RelayHost,$User) = ($ThisLine =~ /^ruleset=check_(?:mail|rcpt), arg1=.*, relay=(.*), reject=553\s*[\d.]*\s*.*\.\.\. Domain of sender address (.*) does not exist/) ) {
+      $User =~ s/^.+\@(.+)$/$1/ if ($Detail < 15);
+      $DomainErrors{$RelayHost}{$User . " (sender does not exist)"}++;
+      $Msgs{$QueueID}{"BadRCPT"}++;
+   # file: sendmail.cf
+   } elsif ( ($User,$RelayHost) = ($ThisLine =~ /^ruleset=check_mail, arg1=(.*), relay=(.*), reject=553\s*[\d.]*\s*.*\.\.\. Domain name required for sender address .*/) ) {
+      $DomainErrors{$RelayHost}{$User . " (sender domain missing)"}++;
+   # file: sendmail.cf NOT STOCK moved for order detection reasons -mgt
+   } elsif ($ThisLine =~ /^ruleset=(?:check_relay|check_rcpt), arg1=([^,]*),(?: arg2=[^,]*,)?(?: relay=[^,]*,)? reject=55\d\s*[\d.]*\s*.*(?:Mail from|Rejected:) [^ ]* (?:refused by blackhole site|listed at|found in) (.*)/) {
+      $Temp = "From " . $1 . " by " . $2;
+      $BlackHoled{$Temp}++;
+      $BlackHoles{$2}++;
+   } elsif ( ($Relay,$BlSite) = ($ThisLine =~ /^ruleset=(?:check_relay|check_rcpt), arg1=[^,]*,(?: arg2=[^,]*,)? relay=([^,]*), reject=55\d\s*[\d.]*\s*.*http:\/\/([^\/\s]*)/) ) {
+      $Temp = "From " . $Relay . " by " . $BlSite;
+      $BlackHoled{$Temp}++;
+      $BlackHoles{$BlSite}++;
+   } elsif ( ($Relay,$BlSite) = ($ThisLine =~ /^ruleset=(?:check_relay|check_rcpt), arg1=([^,]*),(?: arg2=[^,]*,)? reject=55\d\s*[\d.]*\s*.*http:\/\/([^\/\s]*)/) ) {
+      #Example 553 error with NO RELAY -mgt
+      #ruleset=check_relay, arg1=s010600402b39ee29.vf.shawcable.net, arg2=127.0.0.2, reject=553 5.3.0
+      #Spam blocked see: http://spamcop.net/bl.shtml?70.68.8.182: 1 Time(s)
+      $Temp = "From " . $Relay . " by " . $BlSite;
+      $BlackHoled{$Temp}++;
+      $BlackHoles{$BlSite}++;
+   } elsif ( ($Relay,$BlSite) = ($ThisLine =~ /reject=553\s*[\d.]*\s*<[^ ]*>\.\.\. +Mail from ([\d\.]+) rejected\;see http:\/\/([^\/\s]*)/) ) {
+      #This is the another blackhole tag -mgt
+      $Temp = "From " . $Relay . " by " . $BlSite;
+      $BlackHoled{$Temp}++;
+      $BlackHoles{$BlSite}++;
+   } elsif ( ($BlSite, $Relay) = ($ThisLine =~ /reject=553\s*[\d.]*\s*<[^ ]*>\.\.\. +Email blocked using ORDB.org - see \<http:\/\/(ORDB\.org)\/lookup\/\?host\=([\d\.]+)/) ) {
+      #This is the tag from ORDB site -mgt
+      $Temp = "From " . $Relay . " by " . $BlSite;
+      $BlackHoled{$Temp}++;
+      $BlackHoles{$BlSite}++;
+#   } elsif ( ($Relay,$BlSite) = ($ThisLine =~ /^ruleset=(?:check_relay|check_rcpt), arg1=[^,]*, relay=([^,]*), reject=550\s*[\d.]*\s*<[^ ]*>\.\.\. Mail from [^ ]* refused by blackhole site ([^ ]*)/) ) {
+#      $Temp = "From " . $Relay . " by " . $BlSite;
+#      $BlackHoled{$Temp}++;
+#      $BlackHoles{$BlSite}++;
+#      $Msgs{$QueueID}{"BadRCPT"}++;
+
+   # test for all kinds of rejects due to check_mail
+   # file: sendmail.cf
+   } elsif( ($Arg,$Relay,$Reason) = ($ThisLine =~ /^ruleset=check_mail, arg1=(.*), relay=.*?\[(.*)\].*, reject=(.*)/) ) {
+      $Temp = "[$Relay] $Arg\n\t$Reason";
+      $CheckMailReject{$Temp}++;
+   # file: sendmail.cf
+   } elsif( ($Arg,$Relay,$Reason) = ($ThisLine =~ /^ruleset=check_rcpt, arg1=(.*), relay=.*?\[(.*)\].*, reject=(.*)/) ) {
+       $Reason =~ s/\Q$Arg\E\.\.\. //;
+       $Temp = "$Arg ($Reason)";
+       $CheckRcptReject{$Temp}++;
+       $Msgs{$QueueID}{"BadRCPT"}++;
+   # file=srvrsmtp.c, LogLevel>1, LOG_NOTICE
+   } elsif ( ($Temp)  = ($ThisLine =~ /^lost input channel from (.*) to .* after .*/) ) {
+       $LostInputChannel{$Temp}++;
+   # file=collect.c, LogLevel>2, LOG_NOTICE
+   # file=control.c, LogLevel>2, LOG_NOTICE
+   # file=util.c, LogLevel>1, LOG_NOTICE
+   } elsif ( ($Temp)  = ($ThisLine =~ /^timeout waiting for input (from \S+|during control command)/) ) {
+       $Timeouts{$Temp}++;
+   # file=milter.c, LogLevel>10, LOG_INFO
+   } elsif ( $ThisLine =~ /Milter: no active filter/) {
+       $NoMilterFilters++;
+   # file=srvrsmtp.c
+   } elsif ( ($Temp) = ($ThisLine=~ /\-\-\- 500 5\.5\.1 Command unrecognized: \"(.*)\"/) ) {
+      # first we try to delete it from the list of Unmatched Entries
+      $Temp1 = "<--";
+      # this also accounts for an empty command
+      if ($Temp) {$Temp1 .= " $Temp";}
+      if (defined $OtherList{$Temp1}) {
+         if ($OtherList{$Temp1} == 1) {
+            delete ($OtherList{$Temp1});
+         } else {
+            $OtherList{$Temp1}--;
+         }
+      }
+      # Ignore commands from connects that failed greeting
+      if (not defined $PREGreetingQueue{$QueueID}) {
+         if (not defined $CommandUnrecognized{$QueueID}) {
+            $CommandUnrecognized{$QueueID} = "";
+         }
+         if ($Temp =~ /^$/) { $Temp = "<Empty Line>"};
+         $CommandUnrecognized{$QueueID} =  $CommandUnrecognized{$QueueID} . "\t" . $Temp . "\n";
+      }
+   # similarly, delete last unmatched entry when too many bad commands
+   } elsif ( $ThisLine =~ /^--- 421 4\.\d\.\d .* Too many bad commands; closing connection$/) {
+      if (defined $OtherList{$LastCmd{$QueueID}}) {
+         delete ($OtherList{$LastCmd{$QueueID}});
+      }
+
+   # file=srvrsmtp.c, LogLevel>9, LOG_INFO
+   } elsif ( ( $User, $Host ) = $ThisLine =~ /^invalid domain name \((.*)\) from (.*)/ ) {
+      $DomainErrors{$Host}{$User . " (invalid domain name)"}++;
+   # file=srvrsmtp.c, LogLevel>5, LOG_INFO
+   } elsif ( ( $Host ) = ($ThisLine =~ /(.*) (\(may be forged\) )?did not issue MAIL\/EXPN\/VRFY\/ETRN during connection to /) ) {
+      # we test if they previously sent junk, because the connection is expected to fail
+      if (defined $CommandUnrecognized{$QueueID}) {
+         $CommandUnrecognized{$QueueID} = $CommandUnrecognized{$QueueID} . "    ... and then exited without communicating\n";
+      } else {
+      $DummyConnection{$Host}++;
+      }
+   # file=srvrsmtp.c, LogLevel>-1, LOG_INFO
+   } elsif ($ThisLine =~ /rejecting commands from (.*) due to pre-greeting traffic/ ) {
+      $PREGreeting{$1}++;
+      $PREGreetingQueue{$QueueID}++;
+   # possible "(may be forged)" after IP address
+   # file=srvrsmtp.c, LogLevel>5, LOG_INFO
+   } elsif ( ($Temp)  = ($ThisLine =~ /^.*\[(.*?)\].*: Possible SMTP RCPT flood, throttling./) ) {
+      $BadRcptThrottle{$Temp}++;
+   # file=srvrsmtp.c
+   } elsif ($ThisLine =~ /^Too many recipients$/) {
+      $TooManyRcpts++;
+   # file=deliver.c (note: while this is a syserr, I think it's reasonable to extract it here, as there is not
+   #                 much the sender can do if they don't own the recipient address
+   } elsif ( ($Temp)  = ($ThisLine =~ /^.*?Too many hops (.*)/) ) {
+       $TooManyHops{$Temp}++;
+   # file=main.c LogLevel>3, LOG_INFO
+   } elsif ( ($Warning)  = ($ThisLine =~ /Authentication-Warning: (.*)/) ) {
+      $AuthWarns{$Warning}++;
+   # file=alias.c, LogLevel>2, LOG_ERR
+   } elsif ( ($Forward,$Error) = ($ThisLine =~ /^forward ([^ ]*): transient error: (.*)/) ) {
+      $Temp = $Forward . ": " . $Error;
+      $ForwardErrors{$Temp}++;
+   # file=alias.c, LogLevel>2,10, LOG_WARNING
+   } elsif ( ($Forward,$Error) = ($ThisLine =~ /^forward ([^ ]*): (.*)/) ) {
+      $Temp = $Forward . ": " . $Error;
+      $ForwardErrors{$Temp}++;
+   # file=collect.c, LogLevel>-1,  LOG_NOTICE
+   } elsif ($ThisLine=~ /^headers too large .* from (.*) during message collect$/) {
+      $LargeHdrs{$1}++;
+   # file=srvrsmtp.c, LogLevel>5, LOG_INFO
+   } elsif ($ThisLine=~ /(\S*) ?\[(IPv6:)?([0-9A-F\.:]+)\](?: \(may be forged\))?: (\S+) (\S+) \[rejected\]/i) {
+      chomp($Host=$3." ". (defined($1) ? "(".$1.")" : "(unresolved)") );
+      $Luser=$5;
+      $RejCmd=uc $4;
+      $Abuse{$Host}{$Luser}{$RejCmd}++;
+   # file=srvrsmtp.c, LogLevel>5, LOG_INFO
+   } elsif ( $ThisLine =~ /\[(IPv6:)?([0-9A-F\.:]+)]: ETRN (\S+)/i ) {
+      chomp($ETRN=$3." from ".$2);
+      $ETRNs{$ETRN}++;
+   # file=conf.c, LogLevel>8, LOG_NOTICE
+   } elsif ( $ThisLine =~ /rejecting connections on daemon [^ ]+: load average: ([0-9]+)/ ) {
+      $LoadAvg{$1}++;
+      $LoadAvgReject++;
+   # file=conf.c, LogLevel>8, LOG_INFO
+   } elsif ( ($Reason) = ($ThisLine =~ /(deferring connections on daemon .*): \d+ per second/) ) {
+      $RuleSets{$Reason}++;
+   # file=conf.c, LogLevel>3, LOG_NOTICE
+   } elsif ($ThisLine=~ /tcpwrappers \((.+), (.+)\)/) {
+      chomp($Host=$2);
+      $MailRejected{$Host}++;
+   } elsif (
+      # file=queue.c, LogLevel>8, LOG_INFO
+      ($ThisLine =~ /Aborting queue run: load average too high/ ) or
+      # file=queue.c, LogLevel>8, LOG_INFO
+      ($ThisLine =~ /Skipping queue run -- load average too high/ )
+   ){
+      $LoadAvgQueueSkip++;
+   # file=stats.c, LogLevel>12, LOG_INFO
+   } elsif ( ($StatFile, $StatError) = ($ThisLine=~ /^poststats: (.*?): (.*)/) ) {
+      $StatFileError{$StatFile}{$StatError}++;
+   # file=srvrsmtp.c, LogLevel>9, LOG_WARNING
+   } elsif ( ($Auth, $Reason, $DetailReason, $RelayHost) = ($ThisLine =~ /^AUTH failure \((.*)?\): ([^\(]*)(\(.*) relay=(.*)/) ) {
+      if ( $Reason =~ /^user not found / ) {
+         (($User) = ($DetailReason =~ /\(-20\) SASL\(-13\): user not found: .*user(?:=|: )([^ ,]*)/));
+            $AUTHnouser{$User}++;
+      } else {
+         $AUTHfailure{$RelayHost}{$Reason}++;
+      }
+   # file=tls.c, LogLevel>7, LOG_INFO
+   } elsif ($ThisLine=~ /STARTTLS=.* field=cn_issuer, status=failed to extract CN/ ) {
+      $NoCommonName++;
+   # file=tls.c, LogLevel>12, LOG_WARNING
+   } elsif ( ($TLSFile) = ($ThisLine=~ /STARTTLS: (.* missing)/) ) {
+      $TLSFileMissing{$TLSFile}++;
+   # file=tls.c, LogLevel>7, LOG_WARNING
+   } elsif ( ($TLSFile) = ($ThisLine=~ /STARTTLS=((server|client): file .* unsafe: .*)/) ) {
+      $TLSFileMissing{$TLSFile}++;
+   # file=srvrsmtp.c, LogLevel>5, LOG_WARNING; reason given as of 8.14.6
+   } elsif ( ($TLSReason, $TLSFrom) = ($ThisLine=~ /STARTTLS=server, error: accept failed=-?\d+, reason=([^,]*), (?:[^,]*,){3} relay=(.*)/) ) {
+      $TLSAcceptFailed{$TLSReason}{$TLSFrom}++;
+   # handle pre-8.14.6
+   } elsif ( ($TLSFrom) = ($ThisLine=~ /STARTTLS=server, error: accept failed=-?\d+, SSL_error=(?:[^,]*,){3} relay=(.*)/) ) {
+      $TLSAcceptFailed{"no reason given"}{$TLSFrom}++;
+   # file=deliver.c, LogLevel>5, LOG_WARNING;  reason given as of 8.14.6
+   } elsif ( ($TLSReason) = ($ThisLine=~ /STARTTLS=client, error: connect failed=-?\d+. reason=([^,]*),/) ) {
+      $TLSConnectFailed{$TLSReason}++;
+   # handle pre-8.14.6
+   } elsif ($ThisLine=~ /STARTTLS=client, error: connect failed=-?\d+. SSL_error=/) {
+      $TLSConnectFailed{"no reason given"}++;
+   # file=tls.c, LogLevel>-1, LOG_INFO
+   } elsif (($CommonName,$StarttlsReason) = ($ThisLine =~ /^STARTTLS: (?:x509|TLS) cert verify: depth=[0-9]+ .*\/CN=([^\/,]*).* state=[0-9]+, reason=(.*)$/ )) {
+      # "reason=ok" now printing in sendmail 8.16.1; not an error
+      if ($StarttlsReason !~ /^ok$/) {
+         $StarttlsCert{$StarttlsReason}{$CommonName}++;
+      }
+   # do the same if, incorrectly, Common Name is not defined
+   } elsif (($StarttlsReason) = ($ThisLine =~ /^STARTTLS: (?:x509|TLS) cert verify: depth=[0-9]+ .* state=[0-9]+, reason=(.*)$/ )) {
+      # "reason=ok" now printing in sendmail 8.16.1; not an error
+      if ($StarttlsReason !~ /^ok$/) {
+         $StarttlsCert{$StarttlsReason}{"(undefined CommonName)"}++;
+      }
+   # file=tls.c, LogLevel>8, LOG_INFO
+   } elsif ( ($StarttlsMode, $StarttlsVerify, $StarttlsCipherType, $StarttlsNumBits) =
+      ($ThisLine =~ /^STARTTLS=(server|client), relay=.*, version=.*, verify=(\w*), cipher=(.*), bits=(\w*\/\w*)/) ) {
+      if      ($StarttlsVerify =~ /^OK$|^TEMP$|^PROTOCOL$|^SOFTWARE$|^NO$|^NOT$|^FAIL$|^NONE$/) {
+         $Starttls{$StarttlsMode}{$StarttlsVerify}++;
+      } else {
+         $Starttls{$StarttlsMode}{'Other'}++;
+      }
+      $StarttlsCipher{"Cipher: " . $StarttlsCipherType . " Bits: " . $StarttlsNumBits}++;
+   # file=queue.c, LogLevel>-1, LOG_ALERT
+   } elsif ( ($Reason) = ($ThisLine=~ /^Losing (.*)/ ) ) {
+      $LostQueueFile{$Reason}++;
+   # file=queue.c, LogLevel>0, LOG_ALERT
+   } elsif ( ($File) = ($ThisLine=~ /^low on space \(.* in (.*)\), max avail/ ) ) {
+   $LowSpace{$File}++;
+   # file=daemon.c, LogLevel>8, LOG_INFO
+   } elsif ($ThisLine=~ /^rejecting new messages/) {
+   $DaemonThrottle++;
+   # this appears to be the result of EX_PROTOCOL return code, so it should be handled with other EX_ messages
+   } elsif ($ThisLine=~ /Remote protocol error/) {
+      $RemoteProtocolError++;
+   } elsif (
+      # file=util.c, LogLevel>-1, LOG_NOTICE
+      (($Host,$Attack) = ($ThisLine =~ /POSSIBLE ATTACK from ([^ ]+): (.*)/)) or
+      # fqdn may be missing before IP address
+      # file=srvrsmtp.c, LogLevel>5, LOG_INFO
+      (($Host,$Attack) = ($ThisLine =~ /(.*\[[^ ]+\])(?:\s+\(may be forged\))?: possible SMTP attack: (.*)$/))
+   ) {
+      $AttackAttempt{$Host}{$Attack}++;
+   #file=headers.c, LogLevel>-1, LOG_ALERT
+   } elsif (($Attack) = ($ThisLine =~ /^(.*) \(possible attack\)$/)) {
+      $AttackAttempt{"UNKNOWN"}{$Attack}++;
+   # file=usersmtp.c, LogLevel>8, LOG_WARNING
+   } elsif ( ($File,$Error) = ($ThisLine =~ /error: safesasl\(([^ ]+)\) failed: (.*)$/) ) {
+      $SaslError{$File}{$Error}++;
+   # can't find the following
+   } elsif ( $ThisLine =~ /Can\'t create output/ ) {
+      $CantCreateOutput++;
+   # file=alias.c, LogLevel>3, LOG_INFO
+   } elsif ( $ThisLine =~ /alias database [^ ]+ out of date/ ) {
+      $OutdatedAliasdb++;
+   # We'll filter the "No space left" error because they tend to manifest
+   #    in many different ways
+   # file=err.c, LogLevel>0, LOG_CRIT, LOG_ALERT
+   } elsif ( $ThisLine =~ /No space left on device$/ ) {
+     $NoMoreSpace++;
+   # SYSERR are usually serious...
+   # file=err.c, LogLevel>0, LOG_CRIT, LOG_ALERT
+   } elsif ( ($User,$Reason) = ($ThisLine =~ /SYSERR\((.*)\): (.*)/) ) {
+     $SysErr{$User}{$Reason}++;
+   # file=milter.c, LogLevel>8, LOG_INFO
+   } elsif ( ($HeaderMod) = ($ThisLine =~ /Milter (?:\(\w*\) )?(?:add|insert|change|delete).*: header: (.*)/) ) {
+      foreach $Header (@MilterHeadersToCount) {
+         if ($HeaderMod =~ /$Header/) {
+            $MilterHeaderCount{$Header}++;
+         }
+      }
+   # file=milter.c, LogLevel>3, LOG_INFO
+   } elsif ((my $Milter,$Reason) = ($ThisLine =~ /milter\=(.*), quarantine\=(.*)/)) {
+      my $QuarantineReason = $Milter . ": " . $Reason;
+      $Quarantined{$QuarantineReason}++;
+   
+   } elsif (
+      # file=parseaddr.c, LogLevel>3, LOG_NOTICE
+      ($Address,$Reason) = ($ThisLine =~ /^Syntax error in mailbox address "(.+)" \(([^ ]+)\)/) or
+      # file=sendmail.cf
+      ($Address,$Reason) = ($ThisLine =~ /^<(.+)>\.\.\. (Colon illegal in host name part)/) or
+      # file=parseaddr.c, LogLevel>3, LOG_NOTICE
+      ($Reason,$Address) = ($ThisLine =~ /^(8-bit character in mailbox address) "<(.+)>"/)
+   ) {
+      $AddressError{$Reason}{$Address}++;
+   } elsif ($ThisLine =~ /ruleset=check_relay, arg1=([^,]*),.* reject=550 5\.7\.1 Access denied/) {
+      # We block some particularly annoying spam domains with the
+      # following in /etc/mail/access...
+      # From:example.com ERROR:550 5.7.1 Access denied
+      # Remember the error message is user defined in /etc/mail/access
+      # So if anyone can make a better check please do -mgt
+
+# Note (-bl): the same output is achieved by using the label REJECT in /etc/mail/access file:
+#       From:example.com   REJECT
+      $KnownSpammer{$1}++;
+   # add support for DISCARD in /etc/mail/access
+   } elsif ($ThisLine =~ /ruleset=check_(?:mail|rcpt), arg1=([^,]*), relay=.*\[.+\]( \(may be forged\))?, discard/) {
+      $KnownSpammer{$1}++;
+   } elsif (
+      # file=milter.c, LogLevel>8, LOG_INFO
+      ( $ThisLine =~ /Milter (?:\(\w*\) )?(add|change|insert|delete): /)
+   ) {
+      # We don't care about these statements above
+
+   # DNS Map lookups: file=map.c, LogLevel>9, LOG_INFO
+   } elsif ($ThisLine=~ /dns (\S+)\. =\> (\d+.\d+.\d+.\d+)/) {
+      chomp($Domain=$1);
+      chomp($IP=$2);
+      $DNSMap{$Domain}{$IP}++;
+
+# Here are the statements whose source are not from the stock sendmail:
+
+   # This is from libspf
+   } elsif ( (my $SPFStatus) = ($ThisLine =~ /^Received-SPF: (fail|softfail|neutral|none|error|unknown|pass) /) ) {
+      $SPFResults{$SPFStatus}++;
+
+   # This is for the Sendmail Sender-ID milter
+   } elsif ( (my $SenderIDStatus, $SPFStatus) = ($ThisLine =~ /^Milter (?:\(\w*\) )?insert \(1\): header: Authentication-Results:.*; sender-id=(fail.*|softfail|neutral|none|error|unknown|pass); spf=(fail.*|softfail|neutral|none|error|unknown|pass)/) ) {
+   # Example string
+   # Milter insert (1): header: Authentication-Results: my.host.name
+   # sender=list-users-bounces+list-users=host.name@another.org;
+   # sender-id=neutral; spf=neutral
+      $SPFResults{$SPFStatus}++;
+      $SenderIDResults{$SenderIDStatus}++;
+
+   # file: access
+   #This looks to be a custom ruleset added by Hugo van der Kooij -mgt
+   #Probably would be better renamed as localrule or something.
+   #Google showed me http://hvdkooij.xs4all.nl/email-sendmail.cms
+   } elsif ($ThisLine=~ /ruleset=check_XS4ALL/) {
+      $XS4ALL++;
+   } elsif (
+# This one appears to be the result of a file/socket read; it's not clear to me why we want to ignore it
+      ( $ThisLine =~ /Broken pipe|Connection (reset|timed out)/ ) or
+      ( $ThisLine =~ /Milter: from=/ )
+   ) { # do nothing; statements are filtered out
+
+   } elsif ($ThisLine =~ /reject=550 5\.7\.1 <[^ ]*@([^ ]*)>\.\.\. Relaying Denied/) {
+      # We block some particularly annoying spam domains with the following in /etc/mail/access...
+      # From:example.com  ERROR:550 5.7.1 Relaying Denied (Spammer)
+
+# Note (-bl): this is the same as an earlier check_rcpt, except that the word Denied is capitalized here.
+#       So to avoid confusion I suggest that we use the REJECT label in the access file.
+      $KnownSpammer{$1}++;
+   } elsif (
+      ($Host) = ($ThisLine =~ /relay=([^ ]+ \[[^ ]+\]), reject=553 5\.3\.0 .*/) or
+      ($Host) = ($ThisLine =~ /relay=([^ ]+ \[[^ ]+\] \(may be forged\)), reject=553 5\.3\.0 .*/)
+   ) {
+      $KnownSpammer{$Host}++;
+   } elsif ($ThisLine=~ /relay=(\S+)*.*\[(\d+.\d+.\d+.\d+)\], reject=444 4.4.4 \<([^\>]+)\>\.\.\. Sorry (\S*)/) {
+      chomp($Host=$2." ". (defined($1) ? "(".$1.")" : "(unresolved)") );
+      chomp($Luser=$3);
+      chomp($Ruser=$4);
+      $Ruser="none" if (length($Ruser)==0);
+      $RelayReject{$Host}{$Ruser}{$Luser}++;
+   } elsif ($ThisLine=~ /arg1=\<([^\>]+)\>, relay=(\S+)*.*\[([^\]]+)\], reject=444 4.4.4 Sorry (\S*)/) {
+      chomp($Host=$3." ". (defined($2) ? "(".$2.")" : "(unresolved)") );
+      chomp($Ruser=$1);
+      $Luser="none";
+      $RelayReject{$Host}{$Ruser}{$Luser}++;
+   } elsif ($ThisLine=~ /relay=(\S+)*.*\[(\d+.\d+.\d+.\d+)\], reject=441 4.4.1 \<([^\>]+)\>/) {
+      chomp($Host=$2." ". (defined($1) ? "(".$1.")" : "(unresolved)") );
+      chomp($Luser=$3);
+      $NotLocal{$Host}{$Luser}++;
+   } elsif ($ThisLine=~ /reject=.*MESSAGE NOT ACCEPTED - (.+)/) {
+      chomp($Host=$1);
+      $MailRejected{$Host}++;
+   # default for ruleset checks.
+   } elsif ( ($Reason) = ($ThisLine =~ /^ruleset=.*, arg1=.*, reject=(?:\d{3} )?(?:\d\.\d\.\d )?(.*)$/) ) {
+      $RuleSets{$Reason}++;
+   } elsif ($ThisLine=~/Warning: program (.*) unsafe: (.*)/) {
+      chomp($Directory=$1);
+      chomp($Cause=$2);
+      $WUnsafe{$Directory}{$Cause}++;
+
+   # the following is the catch-all:
+   } elsif ( ($Milter,$Error) = ($ThisLine =~ /^Milter \((.*)\): (.+)/) ) {
+      $MilterErrors{$Milter}{$Error}++;
+   } else {
+      $ThisLine =~ s/.*\: (DSN\: .*)/$1/;
+      $ThisLine =~ s/.*\: (postmaster notify\: .*)/$1/;
+      chomp($ThisLine);
+      # Report any unmatched entries...
+      if ($ThisLine =~ /^<-- /) {
+         # sendmail converts some characters, so we do the same
+         $ThisLine =~ s/\\([23]\d{2})/
+            # clear the most significant bit if set
+            my $tempchar = oct($1 - 200);
+            # if the new value is a printable ASCII character, print it
+            if (($tempchar >= 32) && ($tempchar != 127)) {
+               chr($tempchar);
+            } else {
+            # if not printable ASCII, leave as octal code
+               sprintf("\\%o", $tempchar);
+            }/eg;
+      }
+      # store last unmatched entry, in case it is needed later.  But note that some
+      # statements have no QueueID.
+      if (defined $QueueID) {
+         $LastCmd{$QueueID} = $ThisLine;
+      }
+      $OtherList{$ThisLine}++;
+   }
+}
+
+
+#######################################################
+
+# The following variables are used to print a header
+# only if there is subsequent data to print for each category
+my $HeaderPrinted = 0;
+my $TotalHeaderPrinted = 0;
+my $CurrentHeader = "";
+my $PrintCond = "unless (\$HeaderPrinted) {print \$CurrentHeader; \$HeaderPrinted = 1;}";
+
+$CurrentHeader = "\n\nSEVERE ERRORS\n-------------";
+$HeaderPrinted = 0;
+
+if ($SendmailStopped) {
+   eval "$PrintCond";
+   print "\n\nSendmail IS NOT RUNNING!\
+              If you do not wish to run sendmail, delete the mail log\
+              file (such as /var/log/maillog) to suppress this message.";
+}
+
+my @TotalSevereError = ();
+my $SevereErrorIndex = 0;
+$TotalSevereError[0] = 0;
+
+if (keys %SysErr) {
+   eval "$PrintCond";
+   print "\n\nSystem Error Messages:";
+   # don't sort, as error order may help
+   foreach $User (keys %SysErr) {
+      foreach $Reason (keys %{$SysErr{$User}}) {
+         PrettyTimes("    $Reason", $SysErr{$User}{$Reason});
+         $TotalSevereError[$SevereErrorIndex] += $SysErr{$User}{$Reason};
+      }
+   }
+}
+$TotalSevereError[++$SevereErrorIndex] = 0;
+
+if (keys %LostQueueFile) {
+   eval "$PrintCond";
+   print "\n\nLost Queue Files:";
+   # don't sort and don't list counts (Queue ID is included)
+   foreach $Reason (keys %LostQueueFile) {
+      print "\n    $Reason";
+      $TotalSevereError[$SevereErrorIndex] += $LostQueueFile{$Reason};
+   }
+}
+$TotalSevereError[++$SevereErrorIndex] = 0;
+
+if ($NoMoreSpace > 0) {
+   eval "$PrintCond";
+   print "\n\nError \"No space left on device\" occurred $NoMoreSpace time(s)";
+      $TotalSevereError[$SevereErrorIndex] += $NoMoreSpace;
+}
+$TotalSevereError[++$SevereErrorIndex] = 0;
+
+my $TotalCount = 0;
+foreach $ErrorCount (@TotalSevereError) {
+   if (defined $ErrorCount) {
+      $TotalCount+= $ErrorCount;
+   }
+}
+if ($TotalCount > 0) {
+   print "\n\nTotal SEVERE ERRORS:  $TotalCount";
+}
+
+$TotalHeaderPrinted += $HeaderPrinted;
+
+$CurrentHeader = "\n\nSENDMAIL CONFIGURATION\n----------------------";
+$HeaderPrinted = 0;
+
+if (keys %LowSpace) {
+   eval "$PrintCond";
+   print "\n\nWarning: Low space when writing to:";
+   foreach $File (keys %LowSpace) {
+      print "\n    $File";
+   }
+}
+
+if ($DaemonThrottle > 0) {
+   eval "$PrintCond";
+   print "\n\nDaemon started rejecting messages $DaemonThrottle times due to lack of space";
+}
+
+if (keys %TLSFileMissing) {
+   eval "$PrintCond";
+   print "\n\nWarning: STARTTLS file errors:";
+   foreach $TLSFile (sort keys %TLSFileMissing) {
+      print "\n    $TLSFile";
+   }
+}
+
+if (keys %StatFileError) {
+   eval "$PrintCond";
+   print "\n\nWarning: Error opening statistics files:";
+   foreach $StatFile (sort keys %StatFileError) {
+      print "\n    $StatFile:";
+      foreach $StatError (keys %{$StatFileError{$StatFile}}) {
+         print "\n        $StatError";
+      }
+   }
+}
+
+if ($NoMilterFilters > 0) {
+   eval "$PrintCond";
+   print "\n\nNo active milter filters";
+}
+
+if ($OutdatedAliasdb > 0) {
+   eval "$PrintCond";
+   print "\n";
+   PrettyTimes("Aliases database out of date", $OutdatedAliasdb);
+}
+
+if (keys %WUnsafe) {
+   print "\n\nUnsafe permissions:\n";
+   foreach $Directory (keys %WUnsafe) {
+      print "   In program " . $Directory . ":";
+      foreach $Cause (keys %{$WUnsafe{$Directory}}) {
+         PrettyTimes("      $Cause", $WUnsafe{$Directory}{$Cause});
+      }
+   }
+}
+
+if (keys %SaslError) {
+   eval "$PrintCond";
+   print "\n\nSASL database Errors:\n";
+   foreach $File (sort {$a cmp $b} keys %SaslError) {
+      print "   In file $File:";
+      foreach $Error (sort {$a cmp $b} keys %{$SaslError{$File}}) {
+         PrettyTimes("      $Error", $SaslError{$File}{$Error});
+      }
+   }
+}
+
+if (keys %TooManyHops) {
+   eval "$PrintCond";
+   print "\n\nToo many hops:";
+   foreach $ThisOne (sort keys %TooManyHops) {
+      PrettyTimes("    $ThisOne", $TooManyHops{$ThisOne});
+   }
+}
+
+$TotalHeaderPrinted += $HeaderPrinted;
+
+$CurrentHeader = "\n\nSTATISTICS\n----------";
+$HeaderPrinted = 0;
+
+if (($SendmailStarts or $BytesTransferred or $MsgsSent or $AddrRcpts) and
+    ($Detail >= 1)) {
+   eval "$PrintCond";
+   if ($SendmailStarts > 0) {
+      print "\n\nSendmail was started $SendmailStarts time(s)";
+   }
+   printf("\n\nMessages To Recipients:%11d", $MsgsSent);
+   # Each explicitly addressed recipient in an email is counted as an
+   # "Addressed Recipient"
+   printf("\nAddressed Recipients:%13d", $AddrRcpts);
+   printf("\nBytes Transferred:%16d", $BytesTransferred);
+   # Messages with no valid recipients (for example, fails
+   # some other check) are not delivered
+   printf("\nMessages No Valid Rcpts:%10d", $MsgsNoRcpt);
+}
+
+
+if (($Detail >= 10) and $HeaderPrinted) {
+   # eval $PrintCond not needed, because tested for $HeaderPrinted
+   print "\n\nMessage Size Distribution:\n";
+   print "Range          # Msgs       KBytes\n";
+   $TotalNum = 0;
+
+   # Initialise the Size distribution array
+   my @SizeNames = ('0 - 10k', '10k - 20k', '20k - 50k', '50k - 100k',
+                 '100k - 500k', '500k - 1Mb', '1Mb - 2Mb', '2Mb - 5Mb',
+                 '5Mb - 10Mb', '10Mb+');
+
+   foreach $LastIndex (0..9) {
+      $LastIndex2=9-$LastIndex;
+      last if ($SizeDist[$LastIndex2]{'Bytes'} > 0);
+   }
+
+   foreach $ThisOne (0..$LastIndex2) {
+      printf("%-12s   %6d   %10d\n", $SizeNames[$ThisOne], $SizeDist[$ThisOne]{'Num'}, $SizeDist[$ThisOne]{'Bytes'}/1024);
+      $TotalNum += $SizeDist[$ThisOne]{'Num'};
+      $TotalBytes += $SizeDist[$ThisOne]{'Bytes'};
+   }
+   print  "----------------------------------\n";
+   printf("TOTAL          %6d   %10d\n", $TotalNum, $TotalBytes/1024);
+   if ($TotalNum > 0) {
+      printf("Avg. Size               %10d\n", ($TotalBytes / $TotalNum)/1024);
+   }
+}
+
+if (($Detail >= 5) and (keys %LargeMsgs)) {
+   eval "$PrintCond";
+   print "\n\nLarge Messages (From \-\> To):";
+   foreach $ThisOne (sort keys %LargeMsgs) {
+      PrettyTimes("    $ThisOne", ${LargeMsgs{$ThisOne}});
+   }
+}
+
+# Message recipients are the actual recipients - one for each
+# recipient to which to which a copy of email is sent
+if (($Detail >= 10) and (keys %Mailers)) {
+   eval "$PrintCond";
+   my @DefinedMailers = ('smtp', 'esmtp', 'smtp8', 'dsmtp', 'relay', 'procmail',
+     'local', 'prog', '*file*');
+   print "\n\nMessage recipients per delivery agent:";
+   $TotalNum = 0;
+   print "\nName          # Rcpts";
+   # first we print the common mailers, to maintains some logical grouping
+   foreach $MailerName (@DefinedMailers) {
+     if ($Mailers{$MailerName}) {
+        printf("\n%-12s   %6d", $MailerName, $Mailers{$MailerName});
+        $TotalNum += $Mailers{$MailerName};
+        delete($Mailers{$MailerName});
+     }
+   }
+   # now we print all remaining mailers
+   foreach $MailerName (keys %Mailers) {
+     printf("\n%-12s   %6d", $MailerName, $Mailers{$MailerName});
+     $TotalNum += $Mailers{$MailerName};
+   }
+   printf("\n---------------------\nTOTAL:         %6d", $TotalNum);
+   if ($RelayLocalhost > 0) {
+      printf("\nin addition to %6d relay", $RelayLocalhost);
+      print "\n     submission\(s\) from MSP";
+   }
+}
+
+if (($Detail >= 10) && (keys %ToList)) {
+   eval "$PrintCond";
+   my $ToListCount = 0;
+   #Set default -mgt
+   my $ToListThreshold = $ENV{'sendmail_tolistthreshold'} || "10";
+   #Set sendmail_tolistthreshold = Null to suppress this report -mgt
+   if ($ToListThreshold !~ m/NULL/i) {
+      print "\n\nTop $ToListThreshold Email Recipients\n";
+      foreach my $ToAddr (sort {$ToList{$b}<=>$ToList{$a}} keys %ToList) {
+         if ($ToListCount >= $ToListThreshold) { last; };
+         PrettyTimes("    " . $ToAddr, $ToList{$ToAddr});
+         $ToListCount++;
+      }
+   }
+}
+
+if (($Detail>=10) and (keys %MailBomber)) {
+   eval "$PrintCond";
+   my $MailBombCount = 0;
+   #Set up are defaults -mgt
+   my $MailbombListThreshold = $ENV{'sendmail_mailbomblistthreshold'} || "50";
+   my $MailbombThreshold = $ENV{'sendmail_mailbombthreshold'} || "10";
+
+   foreach $ThisOne (sort {$MailBomber{$b}<=>$MailBomber{$a}} keys %MailBomber) {
+      if ($MailBomber{$ThisOne} >= $MailbombThreshold and $MailBombCount < $MailbombListThreshold) {
+         print "\n\nTop relays (recipients / connections - min $MailbombThreshold rcpts, max $MailbombListThreshold lines):"
+            if ! $MailBombCount;
+         printf("\n    %s%5d / %4d", PrettyHost($ThisOne, 63), $MailBomber{$ThisOne},
+            $MailBomberConn{$ThisOne});
+      }
+      $MailBombCount++;
+   }
+}
+
+if (($Detail >= 5) and (keys %LoadAvg)) {
+   eval "$PrintCond";
+   print "\n\nWarning!!!: ";
+   print "Connections Rejected due to high load average $LoadAvgReject Time(s)";
+   my $MaxLoadAvg = 0;
+   foreach $Load (sort keys %LoadAvg) {
+      PrettyTimes("    Load Avg $Load", $LoadAvg{$Load});
+      if ($Load > $MaxLoadAvg) {
+         $MaxLoadAvg = $Load;
+      }
+   }
+   print "\n   Max. Load Avg reached: $MaxLoadAvg";
+}
+
+if (($Detail >= 5) and ($LoadAvgQueueSkip > 0)) {
+   eval "$PrintCond";
+   print "\n";
+   PrettyTimes("Aborted/skipped mail queue run - load average too high", $LoadAvgQueueSkip);
+}
+
+if ($Detail >= 10) {
+   foreach $StarttlsMode ('server', 'client') {
+      if (keys %{$Starttls{$StarttlsMode}}) {
+         eval "$PrintCond";
+
+         print "\n\nFor STARTTLS in $StarttlsMode mode,";
+         if (defined $Starttls{$StarttlsMode}{'OK'}) {
+            PrettyTimes("    Requests were authenticated",
+               $Starttls{$StarttlsMode}{'OK'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'TEMP'}) {
+            PrettyTimes("    Requests had temporary errors",
+               $Starttls{$StarttlsMode}{'TEMP'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'PROTOCOL'}) {
+            PrettyTimes("    Requests had SMTP protocol errors",
+               $Starttls{$StarttlsMode}{'PROTOCOL'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'SOFTWARE'}) {
+            PrettyTimes("    Requests failed STARTTLS handshake",
+               $Starttls{$StarttlsMode}{'SOFTWARE'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'NO'}) {
+            PrettyTimes("    No cert was presented",
+               $Starttls{$StarttlsMode}{'NO'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'NOT'}) {
+            PrettyTimes("    No cert was requested",
+               $Starttls{$StarttlsMode}{'NOT'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'FAIL'}) {
+            PrettyTimes("    Cert was presented, but not verified",
+               $Starttls{$StarttlsMode}{'FAIL'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'NONE'}) {
+            PrettyTimes("    STARTTLS was not performed",
+               $Starttls{$StarttlsMode}{'NONE'});
+            }
+         if (defined $Starttls{$StarttlsMode}{'Other'}) {
+            PrettyTimes("    Requests had unknown errors",
+               $Starttls{$StarttlsMode}{'Other'});
+            }
+         }
+   }
+   if (defined keys %StarttlsCipher) {
+      eval "$PrintCond";
+      print "\n\nSTARTTLS used the following encryption mechanisms";
+      foreach $StarttlsCipherEntry (sort keys %StarttlsCipher) {
+         PrettyTimes("    " . $StarttlsCipherEntry, 
+            $StarttlsCipher{$StarttlsCipherEntry});
+      }
+   }
+   if ($NoCommonName) {
+      eval "$PrintCond";
+      # The following is a frequent occurrence, but not an error
+      print "\n";
+      PrettyTimes("For STARTTLS, no CommonName given", $NoCommonName);
+      }
+}
+
+if (($Detail >= 5) and (keys %ETRNs)) {
+   eval "$PrintCond";
+   print "\n\nETRNs Received:";
+   foreach $ThisOne (sort keys %ETRNs) {
+      PrettyTimes("    $ThisOne", $ETRNs{$ThisOne});
+   }
+}
+
+if(($Detail >= 10) and (keys %ReturnReceipts > 0)) {
+   eval "$PrintCond";
+   print "\n\nSuccessful Return Receipts:";
+   foreach $ThisOne (sort keys %ReturnReceipts) {
+      PrettyTimes("    $ThisOne", $ReturnReceipts{$ThisOne});
+   }
+}
+
+if (($Detail >= 5) and (keys %MilterHeaderCount)) {
+   eval "$PrintCond";
+   print "\n\nHeaders modified by Milter:";
+   foreach $Header (sort keys %MilterHeaderCount) {
+      PrettyTimes( "    $Header", $MilterHeaderCount{$Header});
+   }
+}
+
+if (($Detail >= 3) and (keys %MilterDeferrals)) {
+   eval "$PrintCond";
+   print "\n\nMilter transient failures:";
+   foreach $Reason (sort keys %MilterDeferrals) {
+      PrettyTimes( "    $Reason", $MilterDeferrals{$Reason});
+   }
+}
+
+if (($Detail >= 10) and (keys %DNSMap)) {
+   print "\n\nDNS Map lookups:";
+   foreach $Domain (sort keys %DNSMap) {
+      foreach $IP (sort keys %{$DNSMap{$Domain}}) {
+         PrettyTimes( "   $Domain => $IP", $DNSMap{$Domain}{$IP});
+      }
+   }
+}
+
+if (($Detail >= 10) and (keys %SenderIDResults)) {
+   print "\n\nSender-ID Results:";
+   foreach my $SenderIDStatus (sort keys %SenderIDResults) {
+      PrettyTimes("   $SenderIDStatus", $SenderIDResults{$SenderIDStatus});
+   }
+}
+
+if (($Detail >= 10) and (keys %SPFResults)) {
+   print "\n\nSPF Results:";
+   foreach my $SPFStatus (sort keys %SPFResults) {
+      PrettyTimes("   $SPFStatus", $SPFResults{$SPFStatus});
+   }
+}
+$TotalHeaderPrinted += $HeaderPrinted;
+
+$CurrentHeader = "\n\nSMTP SESSION, MESSAGE, OR RECIPIENT ERRORS\n------------------------------------------";
+$HeaderPrinted = 0;
+
+my $ErrorIndex = 0;
+my @TotalError = ();
+$TotalError[0] = 0;
+
+
+# SMTP Errors
+
+if (keys %TLSConnectFailed) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nTLS Connect Failed" if ($Detail >=3);
+   foreach $TLSReason (sort keys %TLSConnectFailed) {
+         PrettyTimes("    " . $TLSConnectFailed{$TLSReason})
+            if ($Detail >= 5);
+         $TotalError[$ErrorIndex] += $TLSConnectFailed{$TLSReason};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if( $Detail >=3 );
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %TLSAcceptFailed) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nTLS Failed Access" if ($Detail >=3);
+   foreach $TLSReason (sort keys %TLSAcceptFailed) {
+      print "\n    $TLSReason" if ($Detail >= 5);
+      foreach $TLSFrom (sort keys %{$TLSAcceptFailed{$TLSReason}}) {
+         PrettyTimes("        " . PrettyHost($TLSFrom, 59),
+	    $TLSAcceptFailed{$TLSReason}{$TLSFrom}) if ($Detail >= 5);
+      $TotalError[$ErrorIndex] +=
+         $TLSAcceptFailed{$TLSReason}{$TLSFrom};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %BadAuth) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nBad AUTH mechanism requests" if ($Detail >= 3);
+   foreach $Auth (sort keys %BadAuth) {
+      PrettyTimes("    " . $Auth, $BadAuth{$Auth}) if ($Detail >= 5);
+      $TotalError[$ErrorIndex] += $BadAuth{$Auth};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if( $Detail >=3 );
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %AUTHfailure) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nFailed AUTH requests" if ($Detail >= 3);
+   foreach $Host (sort keys %AUTHfailure) {
+      print "\n    From " . PrettyHost($Host, 58) if ($Detail >=5);
+      foreach $Auth (sort keys %{$AUTHfailure{$Host}}) {
+         PrettyTimes("        $Auth", $AUTHfailure{$Host}{$Auth}) if ($Detail >= 5);
+         $TotalError[$ErrorIndex] += $AUTHfailure{$Host}{$Auth};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %AUTHnouser) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nFailed AUTH requests because of No User" if ($Detail >= 3);
+   my $UserCount = CountOrder(%AUTHnouser);
+   foreach $User (sort $UserCount keys %AUTHnouser) {
+      PrettyTimes("    $User", $AUTHnouser{$User})  if ($Detail >=5);
+      $TotalError[$ErrorIndex] += $AUTHnouser{$User};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if($RemoteProtocolError > 0) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\n" . $RemoteProtocolError . " Remote Protocol Errors" if ($Detail >= 3);
+   $TotalError[$ErrorIndex] += $RemoteProtocolError
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %AttackAttempt) {
+   eval "$PrintCond";
+   print "\n\nWARNING!!!!  Possible Attack:";
+   foreach $Host (sort {$a cmp $b} keys %AttackAttempt) {
+      print "\n   Attempt from $Host with:";
+      foreach $Attack (sort {$a cmp $b} keys %{$AttackAttempt{$Host}}) {
+         PrettyTimes("      $Attack", $AttackAttempt{$Host}{$Attack});
+         $TotalError[$ErrorIndex] += $AttackAttempt{$Host}{$Attack};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]";
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %KnownSpammer) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default
+   my $KnownSpammerThreshold =  $ENV{'sendmail_knownspammerthreshold'} || "1";
+   my $KnownSpammerCount = CountOrder(%KnownSpammer);
+   print "\n\nMail attempts from known spammers: [Occurrences >= $KnownSpammerThreshold]" if ($Detail >= 3);
+   foreach $ThisOne (sort $KnownSpammerCount keys %KnownSpammer) {
+      if ($KnownSpammer{$ThisOne} >= $KnownSpammerThreshold) {
+         PrettyTimes("    " . PrettyHost($ThisOne, 63), $KnownSpammer{$ThisOne}) if ($Detail >= 5);
+      }
+      $TotalError[$ErrorIndex] += $KnownSpammer{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %RelayDenied) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default
+   my $RelayDeniedThreshold =  $ENV{'sendmail_relaydeniedthreshold'} || "1";
+
+   print "\n\nRelaying denied: [Occurrences >= $RelayDeniedThreshold]" if ($Detail >= 3);
+   my $RelayCount = TotalCountOrder(%RelayDenied);
+   foreach $Relay (sort $RelayCount keys %RelayDenied) {
+      $RelayDeniedCount = 0;
+      my $DestCount = CountOrder(%{$RelayDenied{$Relay}});
+      foreach $Dest (sort $DestCount keys %{$RelayDenied{$Relay}}) {
+         $RelayDeniedCount += $RelayDenied{$Relay}{$Dest};
+         $TotalError[$ErrorIndex] += $RelayDenied{$Relay}{$Dest};
+      }
+      if ($RelayDeniedCount >= $RelayDeniedThreshold)  {
+         printf("\n    From %s", PrettyHost($Relay, 58)) if ($Detail >=5);
+         foreach $Dest (keys %{$RelayDenied{$Relay}}) {
+            PrettyTimes("        to " . $Dest,
+               $RelayDenied{$Relay}{$Dest}) if ($Detail >= 5);
+         }
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %CheckMailReject) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default
+   my $CheckMailRejectThreshold =  $ENV{'sendmail_checkmailrejectthreshold'} || "1";
+
+   print "\n\nRejected incoming mail: [Occurrences >= $CheckMailRejectThreshold]" if ($Detail >= 3);
+   foreach $ThisOne (keys %CheckMailReject) {
+      if ($CheckMailReject{$ThisOne} >= $CheckMailRejectThreshold)  {
+         PrettyTimes("    $ThisOne", $CheckMailReject{$ThisOne}) if ($Detail >= 5);
+      }
+      $TotalError[$ErrorIndex] += $CheckMailReject{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %PREGreeting) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set up default -mgt
+   my $PREGreetingThreshold =  $ENV{'sendmail_pregreetingthreshold'} || "1";
+   my $PREGreetingCount = CountOrder(%PREGreeting);
+
+   print "\n\nGreet Pause Rejections: [Occurrences >= $PREGreetingThreshold]" if ($Detail >= 3);
+   foreach my $ip (sort $PREGreetingCount keys %PREGreeting) {
+      PrettyTimes("    " . PrettyHost($ip, 63), $PREGreeting{$ip}) if ($Detail >= 5)
+       && ($PREGreeting{$ip} >= $PREGreetingThreshold);
+      $TotalError[$ErrorIndex] += $PREGreeting{$ip};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %LostInputChannel) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default
+   my $LostInputChannelThreshold = $ENV{'sendmail_lostinputchannelthreshold'} || "1";
+   my $LostInputChannelCount = CountOrder(%LostInputChannel);
+
+   print "\n\nLost input channel: [Occurrences >= $LostInputChannelThreshold]" if ($Detail >= 3);
+   foreach $ThisOne (sort $LostInputChannelCount keys %LostInputChannel) {
+      if ($LostInputChannel{$ThisOne} >= $LostInputChannelThreshold)  {
+         PrettyTimes("    " . PrettyHost($ThisOne, 63), $LostInputChannel{$ThisOne}) if ($Detail >= 5);
+      }
+      $TotalError[$ErrorIndex] += $LostInputChannel{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %DummyConnection) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default
+   my $DummyConnectionThreshold = $ENV{'sendmail_dummyconnectionthreshold'} || "1";
+   my $DummyConnectionCount = CountOrder(%DummyConnection);
+
+   print "\n\nClient quit before communicating: [Occurrences >= $DummyConnectionThreshold]" if ($Detail >= 3);
+   foreach $ThisOne (sort $DummyConnectionCount keys %DummyConnection) {
+      if ($DummyConnection{$ThisOne} >= $DummyConnectionThreshold)  {
+         PrettyTimes("    " . PrettyHost($ThisOne, 63), $DummyConnection{$ThisOne}) if ($Detail >= 5);
+      }
+      $TotalError[$ErrorIndex] += $DummyConnection{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %DomainErrors) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set up default -mgt
+   my $DomainErrorsThreshold = $ENV{'sendmail_domainerrorsthreshold'} || "1";
+
+   print "\n\nUnresolveable or non-existent domains: [Occurrences >= $DomainErrorsThreshold]" if ($Detail >= 3);
+   my $count = TotalCountOrder(%DomainErrors);
+   foreach $ThisOne (sort $count keys %DomainErrors) {
+      my $subcount=CountOrder(%{$DomainErrors{$ThisOne}});
+      my $sublist;
+      my $subcounter = 0;
+      foreach $User (sort $subcount keys %{$DomainErrors{$ThisOne}}) {
+         $subcounter += $DomainErrors{$ThisOne}{$User};
+      }
+      if ( $subcounter >= $DomainErrorsThreshold) {
+         PrettyTimes("    From " . PrettyHost($ThisOne, 58), $subcounter) if ($Detail >=5);
+         foreach $User (sort $subcount keys %{$DomainErrors{$ThisOne}}) {
+            PrettyTimes("        $User", $DomainErrors{$ThisOne}{$User}) if ($Detail >= 10);
+         }
+      }
+      $TotalError[$ErrorIndex] += $subcounter;
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %AuthWarns) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nAuthentication warnings:" if ($Detail >= 3);
+   foreach $ThisOne (sort keys %AuthWarns) {
+      PrettyTimes("    $ThisOne", $AuthWarns{$ThisOne}) if ($Detail >= 5);;
+      $TotalError[$ErrorIndex] += $AuthWarns{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %Timeouts) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set up default -mgt
+   my $TimeoutThreshold = $ENV{'sendmail_timeoutthreshold'} || "1";
+
+   print "\n\nTimeouts:  [Occurrences >= $TimeoutThreshold]" if ($Detail >= 3);
+   my $TimeoutCount = CountOrder(%Timeouts);
+   foreach $ThisOne (sort $TimeoutCount keys %Timeouts) {
+      PrettyTimes("    $ThisOne", $Timeouts{$ThisOne}) if (($Detail >= 5) &&
+         ($Timeouts{$ThisOne} >= $TimeoutThreshold));
+      $TotalError[$ErrorIndex] += $Timeouts{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+
+if (keys %Abuse) {
+   eval "$PrintCond" if ($Detail >= 3);
+   my $TotalAbuse;
+   print "\n\nRejected VRFY/EXPN/ETRN (host,ruser):" if ($Detail >= 3);
+   foreach $Host (sort keys %Abuse) {
+      print "\n    $Host" if ($Detail >= 5);
+      $TotalAbuse = 0;
+      foreach $Luser (sort keys %{$Abuse{$Host}}) {
+         print "\n        $Luser:" if ($Detail >= 5);
+         foreach $RejCmd (sort keys %{$Abuse{$Host}{$Luser}}) {
+            PrettyTimes("  $RejCmd", $Abuse{$Host}{$Luser}{$RejCmd}) if ($Detail >= 5);
+            $TotalAbuse += $Abuse{$Host}{$Luser}{$RejCmd};
+         }
+      }
+      print "\n        Total per host: $TotalAbuse" if ($Detail >= 5);
+      $TotalError[$ErrorIndex] += $TotalAbuse;
+   }
+   print "\n\tTotal: $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %CommandUnrecognized) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nSet(s) of unrecognized SMTP commands:" if ($Detail >= 3);
+   foreach $ThisOne (keys %CommandUnrecognized) {
+      print "\n    From QueueID: $ThisOne" if ($Detail >= 5);
+      print "\n$CommandUnrecognized{$ThisOne}" if ($Detail >= 5);
+      $TotalError[$ErrorIndex] ++;
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %StarttlsCert) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nSTARTTLS failed to verify certificates:" if ($Detail >= 3);
+   foreach $ThisOne (sort keys %StarttlsCert) {
+      printf "\n    %s:", $ThisOne if ($Detail >= 5);
+      foreach $CommonName (sort keys %{$StarttlsCert{$ThisOne}}) {
+         PrettyTimes("       CN: $CommonName", $StarttlsCert{$ThisOne}{$CommonName})
+            if ($Detail >= 5);
+         $TotalError[$ErrorIndex] += $StarttlsCert{$ThisOne}{$CommonName};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+
+# Message errors
+
+
+if ($OverSize > 0) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nRejected $OverSizeBytes bytes in $OverSize message(s)" if ($Detail >= 3);
+   $TotalError[$ErrorIndex] += $OverSize;
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %CollectError) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default per Reason
+   my $CollectErrorThreshold =  $ENV{'sendmail_collecterrorthreshold'} || "1";
+
+   print "\n\nErrors during Collect:" if ($Detail >= 3);
+   foreach $Reason (sort keys %CollectError) {
+      print "\n    $Reason: [Occurrences >= $CollectErrorThreshold]" if ($Detail >= 5);
+      my $colerror = 0;
+      foreach $Source (keys %{$CollectError{$Reason}}) {
+         if ($CollectError{$Reason}{$Source} >= $CollectErrorThreshold) {
+            PrettyTimes("      $Source", $CollectError{$Reason}{$Source}) if ($Detail >= 5);
+         }
+         $colerror = $colerror + $CollectError{$Reason}{$Source};
+      }
+      $TotalError[$ErrorIndex] += $colerror;
+   }
+   print "\n\tTotal: $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %BadRcptThrottle) {
+   eval "$PrintCond" if ($Detail >= 3);
+   my $BadRcptThrottleThreshold =  $ENV{'sendmail_badrcptthrottlethreshold'} || "1";
+   my $BadRcptCount = CountOrder(%BadRcptThrottle);
+
+   print "\n\nClient submitted too many bad recipients: [Occurrences >= $BadRcptThrottleThreshold]" if ($Detail >= 3);
+   foreach $ThisOne (sort $BadRcptCount keys %BadRcptThrottle) {
+      PrettyTimes("    " . PrettyHost($ThisOne,61),
+         $BadRcptThrottle{$ThisOne}) if ($Detail >= 5)
+         && ( $BadRcptThrottle{$ThisOne} >= $BadRcptThrottleThreshold );
+      $TotalError[$ErrorIndex] += $BadRcptThrottle{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if ($TooManyRcpts > 0) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\n$TooManyRcpts messages with too many recipients" if ($Detail >= 3);
+   $TotalError[$ErrorIndex] += $TooManyRcpts;
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %LargeHdrs) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nToo large headers from:" if ($Detail >= 3);
+   foreach $Host ( sort {$LargeHdrs{$b}<=>$LargeHdrs{$a}} keys %LargeHdrs ) {
+      PrettyTimes("    $Host", $LargeHdrs{$Host}) if ($Detail >= 5);
+      $TotalError[$ErrorIndex] += $LargeHdrs{$Host};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %AddressError) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nErrors in mail address:" if ($Detail >= 3);
+   foreach $Reason (sort {$a cmp $b} keys %AddressError) {
+      print "\n   $Reason:" if ($Detail >= 5);
+      foreach $Address (sort {$a cmp $b} keys %{$AddressError{$Reason}}) {
+         PrettyTimes("      $Address", $AddressError{$Reason}{$Address}) if ($Detail >= 5);
+      $TotalError[$ErrorIndex] += $AddressError{$Reason}{$Address};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %Quarantined) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default
+   my $QuarantinedThreshold = $ENV{'sendmail_quarantinedthreshold'} || "1";
+   my $QuarantinedCount = CountOrder(%Quarantined);
+   print "\n\nMessages quarantined by milter: [Occurrences >= $QuarantinedThreshold]" if ($Detail >= 3);
+   foreach $ThisOne (sort $QuarantinedCount keys %Quarantined) {
+      if ($Quarantined{$ThisOne} >= $QuarantinedThreshold)  {
+         PrettyTimes("    $ThisOne", $Quarantined{$ThisOne}) if ($Detail >= 5);
+      }
+      $TotalError[$ErrorIndex] += $Quarantined{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+# Recipient errors
+if (keys %SentTimeouts) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nMessages delayed by recipients:" if ($Detail >= 3);
+   foreach $ThisOne (keys %SentTimeouts) {
+     PrettyTimes("    $ThisOne", $SentTimeouts{$ThisOne}) if ($Detail >=5); 
+     $TotalError[$ErrorIndex] += $SentTimeouts{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %UnknownUsers) {
+   eval "$PrintCond" if ($Detail >= 3);
+   %SortedUsers = ();
+   foreach $Usr (sort keys %UnknownUsers) {
+      foreach $QueueID (sort keys %{ $UnknownUsers{$Usr} }) {
+         $SortedUsers{$Usr}{$Msgs{$QueueID}{"Relay"}}++;
+         $TotalError[$ErrorIndex] ++;
+      }
+   }
+   my $UnknownUsersThreshold = $ENV{'sendmail_unknownusersthreshold'} || "1";
+
+   if ($UnknownUsersThreshold) {
+      print "\n\nUnknown local users: [Occurrences >= $UnknownUsersThreshold]" if ($Detail >= 3);
+   } else {
+      print "\n\nUnknown local users:" if ($Detail >= 3);
+   }
+   if ($Detail >= 5) {
+       my $count = TotalCountOrder( %SortedUsers );
+
+      foreach $Usr (sort $count keys %SortedUsers) {
+         my $subcount = CountOrder( %{$SortedUsers{$Usr}} );
+         my $UnknownUsersCount = 0;
+         foreach $RelayHost (sort $subcount keys %{ $SortedUsers{$Usr} }) {
+            $UnknownUsersCount += $SortedUsers{$Usr}{$RelayHost};
+         }
+         if ($UnknownUsersCount >= $UnknownUsersThreshold) {
+            PrettyTimes("    " . $Usr, $UnknownUsersCount);
+            if ($Detail >= 15) {
+               foreach $RelayHost (sort $subcount keys %{ $SortedUsers{$Usr} }) {
+                  PrettyTimes("        from " . PrettyHost($RelayHost, 54),
+                     $SortedUsers{$Usr}{$RelayHost});
+               }
+            }
+         }
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %UnknownUsersCheckRcpt) {
+   eval "$PrintCond" if ($Detail >= 3);
+   %SortedUsers = ();
+   foreach $Usr (sort keys %UnknownUsersCheckRcpt) {
+      foreach $QueueID (sort keys %{ $UnknownUsersCheckRcpt{$Usr} }) {
+         $SortedUsers{$Usr}{$Msgs{$QueueID}{"Relay"}}++;
+         $TotalError[$ErrorIndex] ++;
+      }
+   }
+   my $UnknownUsersThreshold = $ENV{'sendmail_unknownusersthreshold'} || "1";
+
+   if ($UnknownUsersThreshold) {
+      print "\n\nUnknown users: [Occurrences >= $UnknownUsersThreshold]" if ($Detail >= 3);
+   } else {
+      print "\n\nUnknown users:" if ($Detail >= 3);
+   }
+   if ($Detail >= 5) {
+      my $count = TotalCountOrder( %SortedUsers );
+
+      foreach $Usr (sort $count keys %SortedUsers) {
+         my $subcount = CountOrder( %{$SortedUsers{$Usr}} );
+         my $UnknownUsersCount = 0;
+         foreach $RelayHost (sort $subcount keys %{ $SortedUsers{$Usr} }) {
+            $UnknownUsersCount += $SortedUsers{$Usr}{$RelayHost};
+         }
+         if ($UnknownUsersCount >= $UnknownUsersThreshold) {
+            PrettyTimes("    " . $Usr, $UnknownUsersCount);
+            if ($Detail >= 15) {
+               foreach $RelayHost (sort $subcount keys %{ $SortedUsers{$Usr} }) {
+                  PrettyTimes("        from " . PrettyHost($RelayHost, 54),
+                     $SortedUsers{$Usr}{$RelayHost});
+               }
+            }
+         }
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %DisabledMailbox) {
+   eval "$PrintCond" if ($Detail >= 3);
+   %SortedUsers = ();
+   foreach $Usr (sort keys %DisabledMailbox) {
+      foreach $QueueID (sort keys %{ $DisabledMailbox{$Usr} }) {
+         $SortedUsers{$Usr}{$Msgs{$QueueID}{"Relay"}}++;
+         $TotalError[$ErrorIndex] ++;
+      }
+   }
+   print "\n\nDisabled mailboxes:" if ($Detail >= 3);
+   foreach $Usr (sort keys %SortedUsers) {
+      print "\n    $Usr" if ($Detail >= 5);
+      foreach $RelayHost (sort keys %{ $SortedUsers{$Usr} }) {
+         PrettyTimes("      from " . PrettyHost($RelayHost, 54),
+            $SortedUsers{$Usr}{$RelayHost}) if ($Detail >= 5);
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %CheckRcptReject) {
+   eval "$PrintCond" if ($Detail >= 3);
+   #Set Threshold default
+   my $CheckRcptRejectThreshold = $ENV{'sendmail_checkrcptrejectthreshold'} || "1";
+
+   print "\n\nRejected mail: [Occurrences >= $CheckRcptRejectThreshold]" if ($Detail >= 3);
+   foreach $ThisOne (keys %CheckRcptReject) {
+      if ($CheckRcptReject{$ThisOne} >= $CheckRcptRejectThreshold)  {
+         PrettyTimes("    $ThisOne", $CheckRcptReject{$ThisOne}) if ($Detail >= 5);
+      }
+      $TotalError[$ErrorIndex] += $CheckRcptReject{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %StatRejected) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nMail Rejected:" if ($Detail >= 3);
+   foreach $Reason (sort keys %StatRejected) {
+      print "\n    $Reason:" if ($Detail >= 5);
+      foreach $ToUser (keys %{$StatRejected{$Reason}}) {
+          PrettyTimes("        " . $ToUser, $StatRejected{$Reason}{$ToUser}) if ($Detail >= 5);
+          $TotalError[$ErrorIndex] += $StatRejected{$Reason}{$ToUser};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %StatDeferred) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nMail Deferred:" if ($Detail >= 3);
+   foreach $Reason (sort keys %StatDeferred) {
+      print "\n    $Reason" if ($Detail >= 5);
+      foreach $ToUser (keys %{$StatDeferred{$Reason}}) {
+          PrettyTimes("        To: $ToUser", $StatDeferred{$Reason}{$ToUser}) if ($Detail >= 5);
+          $TotalError[$ErrorIndex] += $StatDeferred{$Reason}{$ToUser};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+
+if (keys %ForwardErrors) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nForwarding errors:" if ($Detail >= 3);
+   my $FECount = CountOrder(%ForwardErrors);
+   foreach $ThisOne (sort $FECount keys %ForwardErrors) {
+      PrettyTimes("    $ThisOne", $ForwardErrors{$ThisOne}) if ($Detail >= 5);
+          $TotalError[$ErrorIndex] += $ForwardErrors{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+# Other errors not originating in base (stock) sendmail distribution
+
+if (keys %BlackHoled) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nBlackHole Totals:" if ($Detail >= 3);
+   foreach $ThisOne (sort keys %BlackHoles) {
+      PrettyTimes("    $ThisOne", $BlackHoles{$ThisOne}) if ($Detail >= 5);
+      $TotalError[$ErrorIndex] += $BlackHoles{$ThisOne};
+   }
+   if ($Detail >= 10) {
+      print "\n\nBlackholed:";
+      my $BlackHoleThreshold = $ENV{'sendmail_blackholethreshold'} || "1";
+      foreach $ThisOne (sort keys %BlackHoled) {
+         if ($BlackHoled{$ThisOne} >= $BlackHoleThreshold) {
+            PrettyTimes("    $ThisOne", $BlackHoled{$ThisOne});
+         }
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if($XS4ALL > 0) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\n$XS4ALL messages discarded from XS4ALL" if ($Detail >= 3);
+   $TotalError[$ErrorIndex] += $XS4ALL;
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if ($CantCreateOutput > 0) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nCan't create output $CantCreateOutput Time(s)" if ($Detail >= 3);
+   $TotalError[$ErrorIndex] += $CantCreateOutput;
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %MailRejected) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nMail was rejected because of the following entries in the access database:" if ($Detail >= 3);
+   foreach $ThisOne (sort keys %MailRejected) {
+      PrettyTimes("    $ThisOne", $MailRejected{$ThisOne}) if ($Detail >= 5);
+      $TotalError[$ErrorIndex] += $MailRejected{$ThisOne};
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %RelayReject) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nWe do not relay for these (host,ruser,luser):" if ($Detail >= 3);;
+   foreach $Host (sort keys %RelayReject) {
+      print "\n    $Host" if ($Detail >= 5);
+      foreach $Ruser (sort keys %{ $RelayReject{$Host} }) {
+         print "\n      $Ruser" if ($Detail >= 5);
+         foreach $Luser (sort keys %{$RelayReject{$Host}{$Ruser}}) {
+            printf "\n            %-30s %i",
+                  $Luser,$RelayReject{$Host}{$Ruser}{$Luser} if ($Detail >= 5);
+            $TotalError[$ErrorIndex] += $RelayReject{$Host}{$Ruser}{$Luser};
+         }
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);;
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %NotLocal) {
+   eval "$PrintCond" if ($Detail >= 3);
+   print "\n\nAddress not local from these (host, user):" if ($Detail >= 3);;
+   foreach $Host (sort keys %NotLocal ) {
+      print "\n    $Host" if ($Detail >= 5);
+      foreach $Luser (sort keys %{ $NotLocal{$Host} }) {
+         printf "\n     %-30s %i",$Luser,$NotLocal{$Host}{$Luser} if ($Detail >= 5);
+            $TotalError[$ErrorIndex] += $NotLocal{$Host}{$Luser};
+      }
+   }
+   print "\n\tTotal:  $TotalError[$ErrorIndex]" if ($Detail >= 3);;
+}
+$TotalError[++$ErrorIndex] = 0;
+
+if (keys %RuleSets) {
+   print "\n\nRuleset violations:";
+   foreach $Reason (sort keys %RuleSets) {
+      PrettyTimes("    $Reason", $RuleSets{$Reason});
+      $TotalError[$ErrorIndex] += $RuleSets{$Reason};
+   }
+}
+$TotalError[++$ErrorIndex] = 0;
+
+eval $ReportFilter;
+if ($@) {
+   print $@;
+   print "While processing ReportFilter:\n$ReportFilter\n";
+}
+
+$TotalCount = 0;
+foreach $ErrorCount (@TotalError) {
+   if (defined $ErrorCount) {
+      $TotalCount += $ErrorCount;
+   }
+}
+if ( ($TotalCount > 0) && ($Detail >= 3)) {
+   eval "$PrintCond";
+   print "\n\nSummary of SMTP Session, Message, and Recipient Errors handled by Sendmail:";
+   print "\n\tTotal:  $TotalCount";
+}
+
+if (keys %MilterErrors) {
+   eval "$PrintCond";
+   print "\n\nMilter Errors:\n";
+   foreach my $Milter (sort {$a cmp $b} keys %MilterErrors) {
+      print "   $Milter:\n";
+      foreach $Error (sort {$a cmp $b} keys %{$MilterErrors{$Milter}}) {
+         PrettyTimes("      $Error", $MilterErrors{$Milter}{$Error});
+      }
+   }
+}
+
+if (keys %OtherList) {
+   $HeaderPrinted = 1;
+   print "\n\n**Unmatched Entries**";
+   foreach my $line (sort {$OtherList{$b}<=>$OtherList{$a} } keys %OtherList) {
+      PrettyTimes("   $line", $OtherList{$line});
+   }
+}
+
+if ($TotalHeaderPrinted > 0) {
+   print "\n";
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:

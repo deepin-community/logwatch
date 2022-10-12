@@ -1,0 +1,785 @@
+logwatch (7.5.6-1) unstable; urgency=medium
+
+  * New upstream version 7.5.6
+  * {s,l}/clam-update.conf: fix encoding (lintian warning)
+
+ -- Willi Mann <willi@debian.org>  Fri, 05 Nov 2021 13:47:57 +0100
+
+logwatch (7.5.5-1) unstable; urgency=medium
+
+  * New upstream version 7.5.5
+
+ -- Willi Mann <willi@debian.org>  Sun, 31 Jan 2021 19:58:46 +0100
+
+logwatch (7.5.4-1) unstable; urgency=medium
+
+  * New upstream version 7.5.4 (closes: #970684)
+  * d/control: Update Homepage field (closes: #956666)
+  * d/control: Update Standards-Version from 4.4.1 to 4.5.0
+  * Switch to debhelper compat level 11 (from 9)
+
+ -- Willi Mann <willi@debian.org>  Sun, 04 Oct 2020 20:40:40 +0200
+
+logwatch (7.5.2-1) unstable; urgency=medium
+
+  * New upstream version 7.5.2
+  * Refresh patches, drop patches included upstream
+  * Upgrade policy 4.3.0 -> 4.4.1 (no changes)
+
+ -- Willi Mann <willi@debian.org>  Sun, 12 Jan 2020 12:25:08 +0100
+
+logwatch (7.5.0-2) unstable; urgency=high
+
+  * s/s/kernel: fix typo. closes: 917836
+
+ -- Willi Mann <willi@debian.org>  Sat, 09 Mar 2019 18:14:03 +0100
+
+logwatch (7.5.0-1) unstable; urgency=medium
+
+  * New upstream version
+    - closes: 855539 fixed unmatched entries in SSH
+    - closes: 905018 match postfix-policyd-spf-python logs
+    - closes: 915617 make regex compatible with newer perl versions
+    - closes: 824034 fixes handling of ignore_services handling in secure
+  * d/control: Remove Suggests on fortune-mod as the zz-fortune script was removed
+  * d/control: update standards version 4.1.4 -> 4.3.0 (no changes)
+  * exim: parse 'SMTP protocol error in "AUTH LOGIN"' lines, closes: 886000
+  * dovecot: adapt for newer sieve log format, closes: 906045
+  * secure: Ignore systemd "Session \d+ logged out" messages, closes: 907512
+  * dovecot: Ignore diagnostic mailbox operation logging.
+
+ -- Willi Mann <willi@debian.org>  Sun, 30 Dec 2018 10:17:30 +0100
+
+logwatch (7.4.3+git20180713-1) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * d/changelog: Remove trailing whitespaces
+  * d/control: Remove trailing whitespaces
+  * d/rules: Remove trailing whitespaces
+  * d/watch: Use https protocol
+
+  [ Willi Mann ]
+  * New upstream version 7.4.3+git20180713
+    - Handle sshd "key negotiation failed" log messages (closes: 880595)
+  * Rebase debian patches
+  * Adapt Vcs-* fields as repo moved to salsa
+  * update standards version 3.9.8 -> 4.1.4 (no changes)
+  * Ignore ecrypt messages in cron (Closes: 862337)
+  * scripts/mdadm: Fix parsing of mdadm.conf, properly handle "<ignore>"
+    (Closes: 907319)
+  * Document workaround for non-conforming SMTP output. (Closes: 871473)
+  * Switch to debhelper compat level 9
+
+ -- Willi Mann <willi@debian.org>  Tue, 02 Oct 2018 19:52:16 +0200
+
+logwatch (7.4.3+git20161207-2) unstable; urgency=medium
+
+  * Revert upstream's change of the declared mail charset.
+    The declared mail charset in mails from Logwatch was recently changed from
+    iso-8859-1 to utf-8. This commit reverts this change to address concerns
+    about invalid UTF-8 encodings. (closes: 849531)
+
+ -- Willi Mann <willi@debian.org>  Sat, 21 Jan 2017 17:44:03 +0100
+
+logwatch (7.4.3+git20161207-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.3+git20161207
+    - kernel: fix parsing of oom killer messages. closes: #833350
+  * Refresh patches, remove patches included upstream
+  * build_tar.sh: Update to work with GIT repository
+  * postfix: Fix unaligned output
+
+ -- Willi Mann <willi@debian.org>  Fri, 16 Dec 2016 20:15:26 +0100
+
+logwatch (7.4.3-2) unstable; urgency=medium
+
+  * s/s/amavis: Fix perl warning "redundant argument in sprintf".
+    closes: 819572
+  * dovecot: Ignore "Logged out" and "Debug" lines. closes: #840956, #840952
+
+ -- Willi Mann <willi@debian.org>  Wed, 02 Nov 2016 19:32:35 +0100
+
+logwatch (7.4.3-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.3
+  * d/control: Update Standards-Version 3.9.6 -> 3.9.8
+
+ -- Willi Mann <willi@debian.org>  Sat, 30 Apr 2016 14:40:57 +0200
+
+logwatch (7.4.2-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.2
+  * Rebase patches, drop apparmor ALLOWED patch, included upstream
+
+ -- Willi Mann <willi@debian.org>  Tue, 01 Mar 2016 09:37:27 +0100
+
+logwatch (7.4.1+svn20160106rev308-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.1+svn20160106rev308
+    - fixes perl 5.22 warning in postfix script (sprintf), closes: #812528
+  * Refresh patches, drop perl 5.22 patches, included upstream
+
+ -- Willi Mann <willi@debian.org>  Sun, 24 Jan 2016 19:17:34 +0100
+
+logwatch (7.4.1+svn20151218rev302-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.1+svn20151218rev302
+    - fixes perl 5.22 warnings in amavis and postfix scripts (partially fixes
+      #809756)
+  * Refresh patches
+  * Add patches for Perl 5.22 warnings in secure and http script (fully
+    closes: 809756)
+
+ -- Willi Mann <willi@debian.org>  Wed, 06 Jan 2016 11:37:05 +0100
+
+logwatch (7.4.1+svn20150731rev294-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.1+svn20150731rev294
+  * Add script to build tarball from SVN svn_build_tar.sh
+  * d/control: Update Standards-Version 3.9.5 => 3.9.6 (no changes)
+  * d/control: Recommend libsys-meminfo-perl (closes: 761399)
+  * refresh patches, drop freshclam log path patch (solved upstream)
+  * postfix: Support openspf.net in pattern (not only openspf.org)
+    (closes: 784306)
+  * audit: support apparmor ALLOWED without parent= parameter (closes: 775111)
+  * README.Debian: Fix path to HOWTO-Customize-Logwatch.gz (closes: 790015)
+  * README.Debian: Some rewording, update on changing filters
+  * d/control: remove space after dot in description (fixes lintian warning)
+
+ -- Willi Mann <willi@debian.org>  Wed, 02 Sep 2015 18:50:14 +0200
+
+logwatch (7.4.1-2) unstable; urgency=medium
+
+  * Revert upstream change on fail2ban service config. This makes fail2ban
+    reporting work again. Closes: #766901
+
+ -- Willi Mann <willi@debian.org>  Mon, 03 Nov 2014 20:02:30 +0100
+
+logwatch (7.4.1-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.1 (svn rev 242)
+    - patches merged upstream:
+      + Change-spamassassin-to-use-maillog-config.patch
+      + s-sshd-ignore-PAM-service-sshd-ignoring-max-retries-.patch
+      + s-s-exim-Fix-wrong-regex.patch
+      + s-s-sshd-Support-fatal-Write-failed-Connection-reset.patch
+      + s-s-dovecot-Recognize-and-report-Server-shutting-dow.patch
+      + s-s-pam_unix-Fix-two-unknown-entries.patch
+    - bugs fixed upstream:
+      + Unmatched entries for AppArmor, closes: 710146
+  * Add Recommends on libsys-cpu-perl, needed by zz-sys script (which is
+    disabled by default). Spotted in #761399. Since zz-sys would also need
+    perl module Sys::MemInfo, we do not close this bug.)
+
+ -- Willi Mann <willi@debian.org>  Wed, 08 Oct 2014 19:32:13 +0200
+
+logwatch (7.4.0+svn20140718rev203-1) unstable; urgency=medium
+
+  * Imported Upstream version 7.4.0+svn20140718rev203
+    - s/smartd: Also support Selective Self-Test
+    - s/kernel: don't report mount option "errors". Closes: #754211
+  * Refresh patches, remove 4 patches merged upstream
+  * Change spamassassin logfile config such that it works on debian
+  * logfiles/vsftpd.conf: Include year in time pattern, such that logfiles
+    from one year ago are not included in the report. Closes: #682036
+  * s/clam-update: Print full path to freshclam log in warning message.
+    Closes: #633776
+  * s/sshd: ignore "PAM service(sshd) ignoring max retries" message.
+  * s/s/exim: Fix wrong regex causing "Uninitialized variable" warning.
+    Closes: #756186
+  * d/control: Update Standards-Version 3.9.4 -> 3.9.5 (no changes)
+  * s/s/sshd: Support "fatal: Write failed: Connection reset by peer" message
+  * s/s/dovecot: Recognize and report "Server shutting down." loglines
+  * s/s/pam_unix: Fix two unknown entries ("ignoring max retries" and a too
+    strict pattern for an authentication failure line)
+  * d/control: Put Vcs-* fields pointing to newly created repository on alioth
+
+ -- Willi Mann <willi@debian.org>  Fri, 08 Aug 2014 19:42:17 +0200
+
+logwatch (7.4.0+svn20131108rev175-1) unstable; urgency=low
+
+  * Imported Upstream version 7.4.0+svn20131108rev175
+    - fixes exim script problems with IPv6 and uninitialized values
+      (closes: #708197, #712655)
+    - script to support rsyslog specific message (closes: #712681)
+    - enhancements to mdadm handling (hopefully closes: #710867)
+  * smartd: Add patch to support additional test types (closes: #636322)
+  * man-page: Fix documentation of --logdir parameter (closes: #670877)
+
+ -- Willi Mann <willi@debian.org>  Thu, 28 Nov 2013 20:10:09 +0100
+
+logwatch (7.4.0+svn20130529rev144-1) unstable; urgency=low
+
+  * Imported Upstream version 7.4.0+svn20130529rev144
+  * Refresh patches, drop dovecot and AppArmor patch - they are included
+    upstream
+  * Use my debian.org mail address in the Maintainer field
+  * Update Standards-Version 3.9.3 -> 3.9.4 (no changes)
+  * s/s/php: Accept time format with specification of time zone
+    (Closes: #705600)
+
+ -- Willi Mann <willi@debian.org>  Sat, 01 Jun 2013 14:03:28 +0200
+
+logwatch (7.4.0+svn20120502rev103-1) unstable; urgency=low
+
+  * Set VDate in logwatch.pl to svn date for svn snapshots
+  * Imported Upstream version 7.4.0+svn20120502rev103
+  * Refresh patches, remove patches applied upstream
+  * Add nginx log file location to httpd logfile specification.
+    Thanks to Clint Byrum (Closes: 624271)
+
+ -- Willi Mann <willi@wm1.at>  Sat, 05 May 2012 21:20:23 +0200
+
+logwatch (7.4.0+svn20120227rev85-1) unstable; urgency=low
+
+  * Imported Upstream version 7.4.0+svn20120227rev85
+  * Refresh patches - amavis patch removed
+  * No longer use logreporter's postfix script - included upstream now
+  * Include new {postfix,amavis}-lw manpage
+  * Update d/copyright to reflect new postfix script status
+  * Standards-Version 3.9.2 -> 3.9.3 (no changes)
+  * Support alternative OoM kernel message in kernel 2.6.32 (Closes: 656806)
+  * Another try to fix dovecot reporting (Closes: 571163)
+
+ -- Willi Mann <willi@wm1.at>  Fri, 06 Apr 2012 21:11:23 +0200
+
+logwatch (7.4.0+svn20111221rev79-1) unstable; urgency=low
+
+  * Imported Upstream version 7.4.0+svn20111221rev79
+  * scripts/services/amavis: Handle some previously unmatched entries.
+    Thanks to Patrice Le Gurun for the patch (Closes: 575866)
+  * Bug618604: Support some kerberos lines in secure.
+    Thanks to Ben Hildred for the patch (Closes: 618604)
+  * Bug649194: Handle unmatched entry in saslauthd.
+    Thanks to Kees Cook for the patch (Closes: 649194)
+  * Bug649197: Add AppArmor log processing to the audit service.
+    Thanks to Kees Cook for the patch (Closes: 649197)
+  * Bug571163: Handle changes in dovecot logging.
+    Thanks to Thorsten Kohlhepp for his assistance (Closes: 571163)
+  * debian/control: Depends: exim4 -> default-mta
+
+ -- Willi Mann <willi@wm1.at>  Sat, 14 Jan 2012 20:02:05 +0100
+
+logwatch (7.4.0+svn20111018rev68-1) unstable; urgency=low
+
+  * Imported Upstream version 7.4.0+svn20111018rev68
+  * services/dpkg: Support new remove line format (Closes: 646101)
+  * services/cron: Support more service names (Closes: 615006)
+  * Cope with .1 as first logfile rotation name (Closes: 612634)
+  * Remove final white space from logwatch text output (Closes: 642398)
+  * zz-disk_space: Support GNU/kFreeBSD.
+    Thanks to mattpays <mailing@schiznik.com> (Closes: 576735)
+
+ -- Willi Mann <willi@wm1.at>  Sat, 05 Nov 2011 20:44:36 +0100
+
+logwatch (7.4.0+svn20110808rev66-1) unstable; urgency=low
+
+  * New Upstream snapshot 7.4.0+svn20110808rev66 (closes: #644053)
+    - Use postfix-logwatch 1.39.05 as postfix script
+  * Packaging now done with git-buildpackage
+  * Update the patch for the secure script
+  * Switch to debian source format 3
+  * debian/rules: Convert to dh command sequencer
+  * debian/rules: Ensure permissions are correctly set on all scripts
+  * debian/rules: Refine Shebang inserter (for postfix script)
+  * Use postfix-logwatch 1.39.05 as postfix script
+  * debian/control: Standards-Version 3.9.2
+  * debian/control: Remove SVN VC hints, switched to git, but not yet
+    published.
+  * debian/watch: reflect upstream move to sf.net
+
+ -- Willi Mann <willi@wm1.at>  Sun, 16 Oct 2011 17:26:59 +0200
+
+logwatch (7.3.6.cvs20090906-2) unstable; urgency=high
+
+  * CVE-2011-1018: Remote code execution by combination of
+    - Logfile name by attacker's choice (e.g. samba log files) and
+    - Missing sanitization of logfile names in system() call.
+    - fix by encapsulating logfile names in ' and disallowing '.
+      Taken from upstream.
+    - closes: #615995
+
+ -- Willi Mann <willi@wm1.at>  Wed, 02 Mar 2011 08:57:07 +0100
+
+logwatch (7.3.6.cvs20090906-1) unstable; urgency=low
+
+  * New CVS snapshot + postfix-logwatch 1.38.01
+    - postfix-logwatch now supports SPF \S+ lines (closes: #507937)
+  * Support cron with -L2 loglevel (closes: #542453)
+  * Move logfiles ending with *.gz or *.bz2 to archive list, so they are
+    unpacked before being processed (closes: #536472)
+  * Include patch for imapd to support loglines from uw-imapd, submitted by
+    Marcin Szewczyk, closes: #541152
+  * scripts/services/denyhosts: Output one host per line, not one possibly
+    very long line with all hosts. closes: #507042
+  * Support "command continues" lines in sudo. closes: #505432
+  * Fix typos in exim script. LP: #425206.
+  * No longer force recipient in the cron script. (--output mail instead of
+    --mailto root)
+  * change comment concerning the Mailto parameter to no longer talk about
+    removed Print parameter. closes: #499109
+  * lintian:
+    - Standards-Version: 3.8.3 (no changes)
+    - Change path to GPL2 in debian/copyright
+
+ -- Willi Mann <willi@wm1.at>  Mon, 07 Sep 2009 17:04:43 +0200
+
+logwatch (7.3.6.cvs20080702-2) unstable; urgency=low
+
+  * add Michael Tautschnig to changelog of former version, crediting
+    him for his hard work fixing the unknown copyright holders issue.
+  * Fix manpage:
+    - --filename instead of --save to save output to a file
+      (closes: #441358)
+    - --print no longer exists, output to stdout is now the default
+    - Fix some formatting issues in the manpage (thanks again to Michael
+    Tautschnig)
+  * services/dpkg: Ignore some previously unknown lines (closes: #491972,
+    thanks Jeremie Bouttier for the report)
+
+ -- Willi Mann <willi@wm1.at>  Sun, 07 Dec 2008 08:20:06 +0100
+
+logwatch (7.3.6.cvs20080702-1) unstable; urgency=medium
+
+  * New upstream CVS snapshot
+    - Fixes issue of unknown copyright holders (thanks Michael Tautschnig)
+    - fixes postfix warnings, closes: #461227
+    - fixes a typo in services/secure script, closes: #432118
+    - print arguments in case of failure executing cat (logwatch.pl),
+      closes: #428183
+    - ignore some more pam_unix lines in proftpd-messages, closes: #480761
+  * add patch by Justin Pryzby to fix an assignment instead of an regex
+    in the services/cron script, closes: #488737
+  * update to Standards-Version 3.8.0 (no changes)
+  * remove preinst script that was used in upgrades from sarge
+  * No longer override upstream detail level to medium, closes: #441144
+  * Fix lintian warning: homepage-in-description
+  * The cron script now explicitly mails to root
+
+ -- Willi Mann <willi@wm1.at>  Fri, 04 Jul 2008 16:51:36 +0200
+
+logwatch (7.3.6-1) unstable; urgency=low
+
+  * New upstream version:
+    - closes: #317388 "Unmatched entries in Postfix section"
+    - closes: #406084 "range examples are wrong ..."
+    - closes: #406411 "bind/named SERVFAIL != Query form disallowed client"
+  * Depend on exim4 rather than exim in debian/controls (closes: #420270)
+  * Add watch file (thanks to Clint Adams, closes: #420243)
+  * Use Homepage: instead of verbosity in Description (closes: #416488)
+  * Avoid using syslog for maillog services. This fixes double reports of
+    postfix, courier and maybe some others.
+  * Add patch that allows --mailto to take no email address. This is used in
+    the cron script. Do not rely on this, the print/encode options will
+    probably be changed in the next version.
+  * Add XS-Vcs-Svn and XS-Vcs-Browser to debian/control.
+  * No longer set DH_COMPAT in debian/rules, use debian/compat. (thanks to
+    lintian). Set compatibility to version 5 and depend on it.
+
+
+ -- Willi Mann <willi@wm1.at>  Mon, 23 Apr 2007 11:46:23 +0200
+
+logwatch (7.3.1-5) unstable; urgency=low
+
+  * Regression: fail2ban doesn't filter by date, thanks Yaroslav Halchenko
+    for notifying me. Also, the fail2ban.log.1 was missing from the Archives
+    definition. again closes: #399864
+
+ -- Willi Mann <willi@wm1.at>  Sun,  3 Dec 2006 11:38:45 +0100
+
+logwatch (7.3.1-4) unstable; urgency=low
+
+  * fail2ban updated, (for new fail2ban upstream and the log filename was wrong)
+    thanks Yaroslav Halchenko (closes: #399864)
+  * additional infos in README.Debian.
+
+ -- Willi Mann <willi@wm1.at>  Tue, 28 Nov 2006 20:53:42 +0100
+
+logwatch (7.3.1-3) unstable; urgency=medium
+
+  * Fixes concerning postfix reported by Andreas Beckmann (thanks):
+    - missing postfix logs (closes: #390741)
+    - ignore some logs in secure, concerning postfix related authentication
+      by modifying the config file for secure. (closes: #390743). The
+      nss-libmyql issue is not fixed. See
+      http://svn.debian.org/wsvn/pkg-logwatch/trunk/?rev=55&sc=1
+
+ -- Willi Mann <willi@wm1.at>  Tue,  3 Oct 2006 08:47:47 +0200
+
+logwatch (7.3.1-2) unstable; urgency=low
+
+  * Another unmatched line for secure.
+  * Recommend libdate-manip-perl.
+  * Change the logwatch warning when Date::Manip not available.
+  * Create the same directory structure in /etc as in the logwatch install
+    script.
+
+ -- Willi Mann <willi@wm1.at>  Fri, 22 Sep 2006 11:50:25 +0200
+
+logwatch (7.3.1-1) unstable; urgency=low
+
+  * New upstream release
+    - closes: #385032: some logging changes in postfix 2.3
+    - fail2ban scripts now included upstream
+  * Add parser for dpkg.log
+  * Some updates to debian/copyright
+  * Pull in patch from upstream for issues with subdirectories in logdirs.
+  * Created patches for secure, pam_unix, cron, openvpn, named, courier to
+    support some unmatched entries.
+  * Also, remove some redundant reporting for secure. This is logged in
+    pam_unix anyway.
+  * Improve the reporting in pam_unix to replace uids with names in two
+    places.
+
+ -- Willi Mann <willi@wm1.at>  Sat, 16 Sep 2006 21:04:24 +0200
+
+logwatch (7.3-2) unstable; urgency=low
+
+  * Update fail2ban script to recognise some more messages. Patch by
+    Yaroslav Halchenko.
+  * Update standards version to 3.7.2. No changes.
+  * Update debian/copyright
+  * Fix lintian warning build-depends-indep-should-be-build-depends debhelper.
+
+ -- Willi Mann <willi@wm1.at>  Thu, 25 May 2006 17:37:58 +0200
+
+logwatch (7.3-1) unstable; urgency=low
+
+  * New upstream release
+    - this should fix the reports about exim "Unmatched Entries".
+      closes: #298275.
+  * Add another unmatched entry for imapd - thanks again to Richard Burton
+    for the report. closes: #356815
+  * Add some unmatched lines for smartd.
+  * remove no longer needed debian-specific logfile definitions. merged
+    upstream.
+  * add fail2ban scripts from Yaroslav Halchenko. closes: #359177
+  * policy version 3.7.0.0, no changes
+
+ -- Willi Mann <willi@wm1.at>  Sun, 19 Mar 2006 18:29:50 +0100
+
+logwatch (7.2.1-2) unstable; urgency=low
+
+  * Set absolute path to sendmail in logwatch.conf
+  * MailFrom set to "root". The user "logwatch" may not exist and
+    cause problems.
+  * Add Unmatched line for imapd. closes: #352333, thanks to Richard Burton
+    for the report.
+  * Handle some unmatched lines for secure. closes: #355528, thanks again to
+    Richard Burton for the report.
+  * Drop the service-exim patch, it's no longer needed.
+
+ -- Willi Mann <willi@wm1.at>  Sat, 11 Feb 2006 16:49:59 +0100
+
+logwatch (7.2.1-1) unstable; urgency=low
+
+  * New upstream release
+    - Drop dependency on gawk
+    - Drop all patches except service-exim.diff, service-secure.diff
+  * Change DH_COMPAT from 3 to 4. Put ${misc:Depends} to Depends: in
+    debian/control.
+  * Support the string " (remote reception)" as additional part in sysklogd
+    restarts. closes: #348974, thanks to Richard Antony Burton for the report.
+    (new patch z-bug-348974.diff)
+  * Document how to get fortunes in ones favourite language.
+  * Change MTA to sendmail, change dependencies to exim | mail-transport-agent
+  * The logfiles/sonicwall.conf file included messages in its LogFile setting,
+    duplicating the whole messages logfile, and much earlier filing up the
+    root partition for busy sites. closes: #349328, thanks to Graham Cobb for
+    the report.
+  * Add new unrecognized line from su in secure. We ignore it, it's handled by
+    pam_unix anyway. thanks Richard Antony Burton for the report (no bug id)
+
+ -- Willi Mann <willi@wm1.at>  Sat, 21 Jan 2006 13:34:03 +0100
+
+logwatch (7.1-2) unstable; urgency=low
+
+  * Remove part of the cron patch, it was redundant.
+  * Workaround to preserve language environment for fortunes closes: #340903,
+    thanks to Benoit Dejean <benoit@placenet.org> for the report.
+  * Openvpn logs to daemon, the server uses ovpn-[^\s]* as name. (The simpler
+    form ovpn-\S* does not work, 'cause logwatch lowercases all conf options.)
+    closes: #341863, thanks to David Anselmi <anselmi@anselmi.us> for the
+    report.
+  * logfiles/daemon.conf didn't contain the calls to the appropriate logfile
+    scripts. closes: #343331, thanks to Arne Roolfs <aroolfs@gmx.de> for the
+    report.
+
+ -- Willi Mann <willi@wm1.at>  Sun,  4 Dec 2005 10:53:37 +0100
+
+logwatch (7.1-1) unstable; urgency=low
+
+  * New upstream release
+    - new standards version 3.6.2 (no changes)
+    - Closes: #317894, frequent typo "IngnoreUnmatched" in various scripts,
+      Closes: #317913, fixes in pure-ftpd
+      both fixes by Piotr Krukowiecki (thanks)
+    - Closes: #323919, regexes for http exploits did not escape "."
+      thanks to Taco IJsselmuiden for the report
+  * Cope with the new directory layout.
+    - There is a preinst script now, the removes unneeded config files.
+    - README.Debian updated
+    - NEWS.Debian added
+    - debian/rules updated
+  * This package is now maintained as project "pkg-logwatch" on
+    alioth.debian.org. The svn repository is on svn.debian.org.
+  * Depend on gawk, and explicity use it in zz-disk_space. Seems that there is
+    some GNUism.
+
+ -- Willi Mann <willi@wm1.at>  Sat, 19 Nov 2005 16:39:24 +0100
+
+logwatch (6.1.2-1) unstable; urgency=low
+
+  * New upstream release
+  * Provide a script that removes "dead" service configuration files.
+    Located at /usr/share/doc/logwatch/examples/. closes: #310504
+  * Some updates to README.Debian.
+  * Update the copyright file.
+
+ -- Willi Mann <willi@wm1.at>  Wed, 15 Jun 2005 16:06:55 +0200
+
+logwatch (6.1.1-1) unstable; urgency=low
+
+  * New upstream release
+    - New format for specifying the format of http Logformat (it's possible
+      that we lose debian apache1 support)
+  * Ignore some cyrus lines (patch submitted by Tommy <mtommy@usa.net>)
+
+ -- Willi Mann <willi@wm1.at>  Thu,  9 Jun 2005 21:48:56 +0200
+
+logwatch (6.1-1) unstable; urgency=low
+
+  * New upstream release
+  * Drop Recommends on libtie-ixhash-perl, libdate-calc-perl. services/exim
+    no longer needs them.
+  * Ignore two unknown entries in services/secure.
+    (pam_authenticate, - pts). They are done in services/pam_unix.
+
+ -- Willi Mann <willi@wm1.at>  Wed,  8 Jun 2005 15:18:27 +0200
+
+logwatch (6.0.2-1) experimental; urgency=low
+
+  * New upstream release
+    - Many patches were applied upstream
+  * Remove the Makefile, do that job in debian/rules.
+
+ -- Willi Mann <willi@wm1.at>  Sat, 30 Apr 2005 16:02:53 +0200
+
+logwatch (6.0.1-1) experimental; urgency=low
+
+  * New upstream release (closes: #302423)
+    - Dropped many patches that were applied upstream.
+    - gawk is no longer needed for sendmail-largeboxes
+      (changes in README.Debian and control)
+    - some patch porting in sshd.
+  * fixes from 5.2.2-5 and 5.2.2-6:
+    - services/http:
+      + Support .html.language-ext html files. (Bug: #303345, thanks to
+        Klaus Ethgen <Klaus@Ethgen.de> for the report and the fix)
+      + Add support for "/sqwebmail".
+    - Accept more chars in usernames in services/sudo script (Bug: #302132,
+      thanks to Richard Mortimer <richm@esblimited.co.uk>)
+  * Add perl header "#!/usr/bin/perl" at the top of every executeable perl
+    script. The code is in the Makefile. Don't know why upstream removed it.
+
+ -- Willi Mann <willi@wm1.at>  Mon, 21 Mar 2005 20:39:45 +0100
+
+logwatch (5.2.2-4) unstable; urgency=medium
+
+  * Reformat README.Debian.
+  * Add info to README.Debian how to get correct http output when using
+    default apache1 configuration as LogFormat. Add the apache1 default
+    LogFormat as alternative to conf/services/http.conf. (Closes: #293115,
+    thanks to Vic Gedris <debian_bugs@gedris.org>)
+  * Make the smartd service (smartmontools) working. It's logging to
+    daemon.log, not to messages. (Closes: #295234, thanks to
+    Piotr Krukowiecki <piotrwww@krukowiecki.net>)
+  * Set LC_ALL=C in the main logwatch script. (closes: #296979, thanks to
+    Gilmar Junior <gilmar_santos_jr-geral@yahoo.com.br>
+  * Fix logfiles/http.conf. All events were logged twice.
+  * Correct logfiles/{daemon,http,maillog,secure}.conf to always include the
+    first rotated logfile. (So no need to use --archives for full accuracy for
+    reports of range "yesterday"). Otherwise some events might get lost. Some
+    other logfile configurations should also get corrected but I can't verify
+    them because I don't have the services running.
+
+ -- Willi Mann <willi@wm1.at>  Wed, 16 Feb 2005 19:43:30 +0100
+
+logwatch (5.2.2-3) unstable; urgency=medium
+
+  * Include HOWTO-Make-Filter (closes: #287165)
+  * Patches from Piotr Krukowiecki <piotrwww@krukowiecki.net>:
+    - One line to postfix ("starting TLS engine")
+    - One modification to samba ("*initially* as user") (closes: #289073)
+  * Move binary building from binary-arch to binary-indep (finally)
+  * s/_/./ in conf/logfiles/http.conf to make it work with apache1
+  * Syslogd now gets feeded by syslog logfile, not messages.
+  * Added a kernel logfile group (kern.log), and the kernel script now
+    uses this instead of messages.
+   (thanks to Petr Stehlik <pstehlik@sophics.cz> for the last three
+    suggested enhancements, closes: #287963)
+  * Added short info how to modify a filter to README.Debian
+  * Consider space in the postfix logs (closes: #289074, thanks to
+    Alex Satrapa <alex.satrapa@apf.edu.au>)
+  * Fix two lintian warnings concerning the synopsis part of the
+    package description. (Remove the "A ")
+
+ -- Willi Mann <willi@wm1.at>  Sat, 25 Dec 2004 10:09:58 +0100
+
+logwatch (5.2.2-2) unstable; urgency=high
+
+  * Enhance description, fix some typos and spelling mistakes.
+  * Fix zz-disk_space for very long device names: Use POSIX output to ensure
+    that there's always one line per mount point and the grep works correctly.
+    (closes: #278816, thanks to Kees van Vloten <kvv@chopin.demon.nl>)
+  * Small fixes to the courier script.
+    - Don't print newline if nothing else is printed.
+    - add -ssl for pop3d and imap (closes: #278680, thanks to Wayne Davison
+    <wayned@users.sourceforge.net>)
+  * Change title of courier reports to "courier mail services".
+  * Cleanups and fixes for the logfiles configuration files:
+    - fix and remove Archive lines.
+    - fix http.conf for debian
+    - consistency fixes
+    mostly reported by Simon Schoar <simon@schoar.de>, closes: #280164
+  * two minor enhancements/fixes to named reporting. (Unmatched Entries)
+  * support "not in AllowUsers" log line in sshd.
+
+ -- Willi Mann <willi@wm1.at>  Sat, 23 Oct 2004 11:05:32 +0200
+
+logwatch (5.2.2-1) unstable; urgency=low
+
+  * New upstream release (Closes: #261275)
+  * Completely remove su reporting from secure
+    + other minor changes in secure.
+  * Update copyright file.
+  * Add support for kcheckpass to pam_unix (which I've seen for
+    unlocking the screen saver)
+  * Remove the unneccessary part "first accept valid lines" from pam_unix.
+  * Other small changes to pam_unix.
+  * Make clam-update working.
+  * Big rewrite of the courier script (and courier.conf).
+    It's now under GPL.
+  * Recommend gawk, but don't print stupid error message if it doesn't exist
+    (exit the script), and add info to README.Debian about that. (The affected
+    service was sendmail-largeboxes)
+  * Get rid of some unmatched entries in cron
+  * Fix for parsing postfix 2.1.4. ("Client Host") (closes: #275051, thanks to
+    Wayne Davison <wayned@users.sourceforge.net>)
+
+ -- Willi Mann <willi@wm1.at>  Fri,  3 Sep 2004 09:20:58 +0200
+
+logwatch (5.1-6) unstable; urgency=medium
+
+   Urgency medium because of wrong copyright file currently in sarge.
+
+  * Correct copyright file.
+  * Fix the service extraction in pam_unix for woody.
+  * exim filter:
+    - Fix some problems with the exim service script and the
+      logfile config file.
+    - include information in Readme.Debian about the required packages
+      for the exim script.
+    (closes: #260056, thanks to James Clendenan for the report.)
+  * Fix reporting of samba in pam_unix.
+  * Throw out some unneeded lines in debian/rules.
+
+ -- Willi Mann <willi@wm1.at>  Mon, 21 Jun 2004 22:50:52 +0200
+
+logwatch (5.1-5) unstable; urgency=medium
+
+    Urgency medium because non-working cron-reporting should go away from
+    testing as fast as possible.
+
+  * Fix cron-script /usr/bin -> /usr/sbin. (closes: #253859, thanks to
+    Ian MacDonald). Forgot to list that change in previous changelog.
+  * Fix (the first really upstream?) bug in logwatch: A small mistake
+    in sshd-reporting. (thanks to Manabu Matsui, closes: #254968)
+  * Don't report pam_unix in SSHD.
+  * Fix a pam_unix -line for su.
+  * Don't report pam_limits in secure.
+
+ -- Willi Mann <willi@wm1.at>  Sat, 12 Jun 2004 12:07:42 +0200
+
+logwatch (5.1-4) unstable; urgency=low
+
+  * Fix typo in Description, thanks to Gustavo Franco (closes: #247497)
+  * Fix pam_unix reporting. It seems that pam has changed. Maybe I need
+    script that warns me when the log-format of pam_unix-entries changes...
+    thanks for reporting Klaus Ethgen. (closes: #247257)
+  * Handle some previously unmatched lines in secure. Added temporary hack
+    to have a nice output until I can fix #239626.
+  * Add syslog.0 as logfile to syslog.conf because syslog is rotated daily,
+    so I would never see cron-reporting if I use logwatch from
+    command-line (helps development).
+  + Move symlink to main script from /usr/bin -> /usr/sbin. Fixes a lintian
+    warning. (This changelog entry was added after the package has been
+    uploaded.)
+
+ -- Willi Mann <willi@wm1.at>  Wed,  5 May 2004 19:47:35 +0200
+
+logwatch (5.1-3) unstable; urgency=low
+
+  * I'm not from marketing: proper upstream homepage url:
+    www... -> http://www...
+  * Don't report PAM_unix lines in secure: support for woody. thanks to
+    Michael Stovenour for the report (closes: #239626)
+  * Added fortune-mod to Suggests.
+  * Removed some lines which were already commented out.
+
+ -- Willi Mann <willi@wm1.at>  Mon, 15 Mar 2004 21:31:39 +0100
+
+logwatch (5.1-2) unstable; urgency=low
+
+  * Verify in the cron script that logwatch is really installed
+    (not removed-but-not-purged)
+  * Set standards-version to 3.6.1.0 instead of 3.6.1 to exactly match
+    the current version.
+  * Make reporting of syslogd - restarts working again
+  * Force permissions of all *.confs to 0644 using find
+  * logfile-group maillog now uses mail.log instead of mail.err, mail.info,
+    mail.warn to avoid possible double-reporting
+  * Avoid calling the target install of Makefile twice
+
+ -- Willi Mann <willi@wm1.at>  Wed, 11 Feb 2004 23:29:08 +0100
+
+logwatch (5.1-1) unstable; urgency=low
+
+  * New upstream release 5.1
+  * Make cron reporting working again. It's the only service that
+    only logs to the syslog logfile.
+
+ -- Willi Mann <willi@wm1.at>  Wed,  4 Feb 2004 20:18:37 +0100
+
+logwatch (5.0+5.1pre1-2) unstable; urgency=low
+
+  * Force permissions of all scripts to 0755
+
+ -- Willi Mann <willi@wm1.at>  Mon,  2 Feb 2004 11:36:38 +0100
+
+logwatch (5.0+5.1pre1-1) unstable; urgency=low
+
+  * Bump to pre5.1
+  * Revert some changes, that turned out not to be neccessary.
+  * Changed description
+
+ -- Willi Mann <willi@wm1.at>  Sun,  1 Feb 2004 23:44:03 +0100
+
+logwatch (5.0-2) unstable; urgency=low
+
+  * Fix permission of /etc/logwatch/conf/services/pureftpd.conf by chmod in
+    Makefile.
+  * Make more services work (see state_of_debianizing).
+
+
+ -- Willi Mann <willi@wm1.at>  Wed, 14 Jan 2004 17:30:12 +0100
+
+logwatch (5.0-1) unstable; urgency=low
+
+  * Initial Release.
+  * Reporting for many services should work, including cron, ssh, courier,
+    exim.
+  * Please report bugs. If a particular service has no output, I need the path
+    to the logfile(s). That's most likely the problem.
+
+ -- Willi Mann <willi@wm1.at>  Wed, 12 Nov 2003 20:14:15 +0100

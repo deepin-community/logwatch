@@ -1,0 +1,372 @@
+
+########################################################
+# Please file all bug reports, patches, and feature
+# requests under:
+#      https://sourceforge.net/p/logwatch/_list/tickets
+# Help requests and discusion can be filed under:
+#      https://sourceforge.net/p/logwatch/discussion/
+########################################################
+
+########################################################
+## Copyright (c) 2016 Orion Poplawski
+## Covered under the included MIT/X-Consortium License:
+##    http://www.opensource.org/licenses/mit-license.php
+## All modifications and contributions by other persons to
+## this script are assumed to have been donated to the
+## Logwatch project and thus assume the above copyright
+## and licensing terms.  If you want to make contributions
+## under your own copyright or a different license this
+## must be explicitly stated in the contribution an the
+## Logwatch project reserves the right to not accept such
+## contributions.  If you have made significant
+## contributions to this script and want to claim
+## copyright please contact logwatch-devel@lists.sourceforge.net.
+#########################################################
+
+use strict;
+my $Detail = $ENV{'LOGWATCH_DETAIL_LEVEL'} || 0;
+my $Ignore_failed = $ENV{'ignore_failed'} || "";
+my $Ignore_leftover = $ENV{'ignore_leftover'} || "";
+my %ConfigError;
+my %Activated;
+my %Failed;
+my %Deactivated;
+my %LeftOver;
+my $Reexecuted = 0;
+my %Reloaded;
+my %Skipped;
+my %Slice;
+my %Slow;
+my %Started;
+my %Target;
+my $TimeChanged = 0;
+my $LastTarget;
+my %UserSession;
+my %OtherList;
+
+# Failure will generate multiple messages like:
+# EL7:
+# Feb  5 16:37:50 hostname systemd: ansible-pull.service: main process exited, code=exited, status=2/INVALIDARGUMENT
+# Feb  5 16:37:50 hostname systemd: Failed to start Run ansible-pull on boot.
+# Feb  5 16:37:50 hostname systemd: Unit ansible-pull.service entered failed state.
+# Feb  5 16:37:50 hostname systemd: ansible-pull.service failed.
+# EL8:
+# Feb  5 16:37:50 hostname systemd[1]: ansible-pull.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
+# Feb  5 16:37:50 hostname systemd[1]: ansible-pull.service: Failed with result 'exit-code'.
+
+while (defined(my $ThisLine = <STDIN>)) {
+   chomp($ThisLine);
+   if ($ThisLine =~ /^(Activat|Deactivat|Mount|Unmount|Reload|Start|Stopp)ing / or
+       $ThisLine =~ /^Finished / or
+       # These events will be caught with the Failed with or failed message
+       $ThisLine =~ /^Failed to start / or
+       $ThisLine =~ /Failed at step / or
+       $ThisLine =~ /([Cc]ontrol|[Mm]ain|[Mm]ount) process exited, code=(exited|killed|dumped),? status=/ or
+       $ThisLine =~ /^Timed out starting/ or
+       $ThisLine =~ /^Unit.* entered failed state\.$/ or
+       # Informational
+       $ThisLine =~ /^Closed .*[\. ][Ss]ockets?\.$/ or
+       $ThisLine =~ /^Closed .* [Ss]cheduler\.$/ or
+       $ThisLine =~ /^Closed .* [Ww]atch\.$/ or
+       $ThisLine =~ /^Closed (?:Multimedia|Sound) System\.$/ or
+       $ThisLine =~ /^Closed PipeWire/ or
+       $ThisLine =~ /^Closed REST API socket for / or
+       $ThisLine =~ /^Closed udev / or
+       $ThisLine =~ /: Consumed .* CPU time\.$/ or
+       # crond will never restart process when it is restarted
+       $ThisLine =~ /^crond\.service: Found left-over process \d+ \(.*\) in control group while starting unit\. Ignoring\.$/ or
+       $ThisLine =~ /^Received SIGINT\./ or
+       $ThisLine =~ /^Detected (architecture|virtualization) / or
+       # Spurious warning - should be fixed in later systemd (EL8.4)
+       $ThisLine =~ /^Failed to connect to API bus: Connection refused/ or
+       # Extransous scope messages with LanSweeper - revisit with EL8.4
+       $ThisLine =~ /: Failed to add PIDs to scope's control group: No such process/ or
+       $ThisLine =~ /scope: Failed with result 'resources'/ or
+       $ThisLine =~ /^Found device / or
+       $ThisLine =~ /Found dependency on / or
+       $ThisLine =~ /Got automount request for \/proc\// or
+       $ThisLine =~ /^Hostname set to / or
+       $ThisLine =~ /^Inserted module / or
+       $ThisLine =~ /^Listening on / or
+       $ThisLine =~ /^Mounted / or
+       $ThisLine =~ /^Queued start job for default target / or
+       $ThisLine =~ /^Queuing reload/ or
+       $ThisLine =~ /^Relabelled / or
+       $ThisLine =~ /^Reloading\.$/ or         # Happens on each boot at switch root
+       $ThisLine =~ /^RTC configured in / or
+       $ThisLine =~ /^Running in initial RAM disk\.$/ or
+       $ThisLine =~ /^selinux: avc: *received policyload notice/ or
+       $ThisLine =~ /^Set hostname to / or
+       $ThisLine =~ /^(?:Set up|Unset) automount Arbitrary Executable File Formats File System Automount Point\.$/ or
+       $ThisLine =~ /^Shutting down\.$/ or
+       $ThisLine =~ /^Startup finished in / or
+       $ThisLine =~ /^Stopped / or
+       $ThisLine =~ /^Switching root\.$/ or
+       $ThisLine =~ /: Succeeded\.$/ or
+       $ThisLine =~ /^Successfully loaded SELinux policy in / or
+       $ThisLine =~ /already active, refusing\./ or
+       $ThisLine =~ /^Failed to propagate agent release message:/ or
+       $ThisLine =~ /: Supervising process .* which is not our child\. We'll most likely not notice when it exits\.$/ or
+       $ThisLine =~ /: Got notification message from PID \d+, but reception is disabled\./ or
+       $ThisLine =~ /: Got notification message from PID \d+, but reception only permitted for main PID \d+/ or
+       $ThisLine =~ /Cannot find unit for notify message of PID \d+/ or
+       $ThisLine =~ /^systemd .* running in system mode/ or
+       # This is preceeded by a more descriptive message
+       $ThisLine =~ /^This usually indicates unclean termination of a previous run, or service implementation deficiencies\.$/ or
+       $ThisLine =~ /Transaction is destructive\./ or
+       $ThisLine =~ /^Unit .* is bound to inactive unit .*\. Stopping, too\./ or
+       $ThisLine =~ /Unit (.* is )?not needed anymore\. Stopping\./ or
+       $ThisLine =~ /State '(stop-sigterm|stop-final-sigterm)' timed out\. Killing\./ or
+       $ThisLine =~ /: Start(-pre)? operation timed out\. Terminating\./ or
+       $ThisLine =~ /hold-?off time over, scheduling restart\./ or
+       $ThisLine =~ /Service has no hold-off time.*, scheduling restart\./ or
+       $ThisLine =~ /Service Restart.* expired, scheduling restart\./ or
+       $ThisLine =~ /Scheduled restart job, restart counter is at .*\./ or
+       $ThisLine =~ /Stopping timed out\. Killing\./ or
+       $ThisLine =~ /^Timed out waiting for/ or
+       $ThisLine =~ /: Watchdog timeout/ or
+       $ThisLine =~ /^Dependency failed for / or
+       $ThisLine =~ /Processes still around after .*SIGKILL\./ or
+       $ThisLine =~ /^Unmounted / or
+       $ThisLine =~ /: Unit is bound to inactive unit / or
+       $ThisLine =~ /[Hh]ardware watchdog / or
+       # This is now trapped as a Slow Start error
+       #$ThisLine =~ /PID file .* not readable \(yet\?\) after start/ or
+       $ThisLine =~ /Failed to read PID from file / or
+       # Units can depend on files that do not exist
+       $ThisLine =~ /Cannot add dependency job(:? for unit .*)?, ignoring: Unit (:?.* failed to load: No such file or directory|not found)\.$/ or
+       # https://bugs.freedesktop.org/show_bug.cgi?id=90386
+       $ThisLine =~ /Dev(ice)? .* appeared twice with different sysfs paths .* and / or
+       # Inactive units are sometimes reloaded
+       $ThisLine =~ /^Unit .* cannot be reloaded because it is inactive\.$/ or
+       $ThisLine =~ /^.*: Unit cannot be reloaded because it is inactive\.$/ or
+       $ThisLine =~ / is not active\.$/ or
+       # https://bugzilla.redhat.com/show_bug.cgi?id=1306452 
+       $ThisLine =~ /^[^ ]*\.mount: Directory \/[^ ]* to mount over is not empty, mounting anyway\.$/ or
+       # A known issue - reported by multiple distributions
+       $ThisLine =~ /^user\@\d+\.service: Failed at step CGROUP spawning \/usr\/lib\/systemd\/systemd: No such file or directory$/ or
+       $ThisLine =~ /^Received SIGRTMIN\+2[01] from PID \d+ \((?:plymouthd|n\/a)\)\.$/ or
+       # https://bugzilla.redhat.com/show_bug.cgi?id=1072368
+       $ThisLine =~ /^Received SIGRTMIN\+24 from PID \d+ \((?:kill|n\/a)\)\.$/ or
+       $ThisLine =~ /: Killing process \d+ \(.*\) with signal SIG.+\.$/ or
+       $ThisLine =~ /^Removed slice / or
+       $ThisLine =~ /^pam_unix\(systemd-user:session\): session (?:opened|closed) for user/ or
+       $ThisLine =~ /Adding .* random time\.$/ or
+       # https://bugzilla.redhat.com/show_bug.cgi?id=1890632
+       $ThisLine =~ /Not generating service for XDG autostart .*,/ or
+       $ThisLine =~ /gnome-systemd-autostart-condition not found/ or
+       $ThisLine =~ /kde-systemd-start-condition not found/ or
+       $ThisLine =~ /Unknown key name .* in section 'Desktop Entry'/ or
+       # These happen on every shutdown - downgraded to debug message in systemd v235
+       # https://github.com/systemd/systemd/issues/6777
+       $ThisLine =~ /^Failed to propagate agent release message: (?:Connection reset by peer|Transport endpoint is not connected)/ or
+       $ThisLine =~ /^cgroup compatibility translation between legacy and unified hierarchy settings activated\. See cgroup-compat debug messages for details\.$/ or
+       $ThisLine =~ /^.*\.socket: Socket service .* already active/
+   ) {
+      # Ignore these
+   } elsif (my ($service,$reason) = ($ThisLine =~ /^Configuration file ([^ ]*) is ([^.]*)\./)) {
+      $ConfigError{$reason}{$service}++;
+   } elsif (my ($service,$reason) = ($ThisLine =~ /^\[(.*)\] (Support for option .* has been removed) and it is ignored/)) {
+      $ConfigError{$reason}{$service}++;
+   } elsif (my ($service,$reason) = ($ThisLine =~ /^\[?([^\]:]+(?::\d+)?)[\]:]? (Unknown .* in section '.*')/)) {
+      $ConfigError{$reason}{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /(\S+): Failed (:?to execute command|with result)/)) {
+      $Failed{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /(\S+) failed\.$/)) {
+      $Failed{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^(.*) failed with error code \d+\.$/)) {
+      $Failed{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^(.*): Start request repeated too quickly\.$/)) {
+      $Failed{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^(.*): Job .* timed out\.$/)) {
+      $Failed{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^(.*): Job .* failed with result .*$/)) {
+      $Failed{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^Failed (unmounting .*)\.$/)) {
+      $Failed{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^Failed to (listen on .*)\.$/)) {
+      $Failed{$service}++;
+   } elsif (my ($target) = ($ThisLine =~ /^Reached target (.*)\.$/)) {
+      $Target{$target}++;
+      $LastTarget = $target;
+   } elsif (my ($session, $user) = ($ThisLine =~ /^Started Session ([[:xdigit:]]+) of user (.*)\.$/)) {
+      $UserSession{$user}->{$session}++;
+   } elsif (my ($service) = ($ThisLine =~ /^Activated (.*)\.$/)) {
+      $Activated{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^Started (.*)\.$/)) {
+      $Started{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^Reloaded (.*)\.$/)) {
+      $Reloaded{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /^Deactivated (.*)\.$/)) {
+      $Deactivated{$service}++;
+   } elsif (my ($service) = ($ThisLine =~ /(.*): Deactivated /)) {
+      $Deactivated{$service}++;
+   } elsif ($ThisLine eq "Reexecuting.") {
+      $Reexecuted++ if $Detail;
+   } elsif ($ThisLine =~ /^Time has been changed$/) {
+      $TimeChanged++;
+   } elsif (my ($slice) = ($ThisLine =~ /^Created slice (.*)\.$/)) {
+      $Slice{$slice}++;
+   } elsif (my ($name) = ($ThisLine =~ /^Condition check resulted in (.*) being skipped\.$/)) {
+      $Skipped{$name}++ if $Detail;
+   } elsif (my ($pidfile) = ($ThisLine =~ /^PID file (.*) not readable \(yet\?\) after start\.$/)) {
+      $Slow{$pidfile}++;
+   } elsif (my ($pidfile) = ($ThisLine =~ /: Can't open PID file (.*) \(yet\?\) after start:/)) {
+      $Slow{$pidfile}++;
+   } elsif (my ($Service, $Exe) = ($ThisLine =~ /^(.*): Found left-over process \d+ \((.*)\) in control group while starting unit\. Ignoring\.$/)) {
+      $LeftOver{"$Service:$Exe"}++ unless "$Service:$Exe" =~/^$Ignore_leftover$/i;
+   } else {
+      $OtherList{$ThisLine}++;
+   }
+}
+
+if (keys %ConfigError) {
+    print "Configuration errors:\n";
+    foreach my $reason (sort {$a cmp $b} keys %ConfigError) {
+	my $tot = 0;
+	print "   $reason";
+	foreach my $service (sort {$a cmp $b} keys %{$ConfigError{$reason}}) {
+	    $tot += $ConfigError{$reason}{$service};
+	    if ($Detail >= 10) {
+		print "\n      $service: $ConfigError{$reason}{$service} Time(s)";
+	    }
+	}
+	if ($Detail < 10) {
+	    print ": $tot Time(s)"
+	}
+	print "\n";
+    }
+    print "\n";
+}
+
+# Because we set Failed in multiple locations, cleanup once here
+foreach my $item (keys %Failed) {
+   delete $Failed{$item} if ($item =~ /^$Ignore_failed$/i);
+}
+
+if (keys %Failed) {
+   print "ERROR: Failed state:\n";
+   foreach my $item (sort {$a cmp $b} keys %Failed) {
+      print "        $item: $Failed{$item} Time(s)\n";
+   }
+   print "\n";
+}
+
+# Detail >= 1
+if ($Reexecuted) {
+   print "Reexecuted systemd: $Reexecuted Time(s)\n\n";
+}
+
+if (keys %Skipped) {
+   print "Condition check resulted in the following being skipped:\n";
+   foreach my $item (sort {$a cmp $b} keys %Skipped) {
+      print "        $item: $Skipped{$item} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %LeftOver) {
+   print "Warning: Found left-over process in control group while starting unit:\n";
+   foreach my $item (sort {$a cmp $b} keys %LeftOver) {
+      my ($service, $exe) = split(":", $item);
+      print "        $service($exe): $LeftOver{$item} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %Target && $Detail > 3) {
+   print "Reached target $LastTarget: $Target{$LastTarget} Time(s)";
+   if ($Detail > 10) {
+      print ", and:\n";
+      foreach my $target (sort {$a cmp $b} keys %Target) {
+         print "    $target: $Target{$target} Time(s)\n";
+      }
+   } else {
+      print "\n";
+   }
+   print "\n";
+}
+
+if (keys %Started && $Detail > 3) {
+   print "Started:\n";
+   foreach my $started (sort {$a cmp $b} keys %Started) {
+      print "    $started: $Started{$started} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %Activated && $Detail > 3) {
+   print "Activated:\n";
+   foreach my $item (sort {$a cmp $b} keys %Activated) {
+      print "    $item: $Activated{$item} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %Slow && $Detail > 3) {
+   print "Slow to start:\n";
+   foreach my $pidfile (sort {$a cmp $b} keys %Slow) {
+      print "    $pidfile: $Slow{$pidfile} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %Reloaded && $Detail > 5) {
+   print "Reloaded:\n";
+   foreach my $item (sort {$a cmp $b} keys %Reloaded) {
+      print "    $item: $Reloaded{$item} Time(s)\n";
+   }
+   print "\n";
+}
+
+if (keys %Deactivated && $Detail > 5) {
+   print "Deactivated:\n";
+   foreach my $item (sort {$a cmp $b} keys %Deactivated) {
+      print "    $item: $Deactivated{$item} Time(s)\n";
+   }
+   print "\n";
+}
+
+if ($TimeChanged && $Detail > 5) {
+   print "Time Changed: $TimeChanged Time(s)\n\n";
+}
+
+if (keys %UserSession && $Detail > 3) {
+   print "User Sessions:\n";
+   foreach my $user (sort {$a cmp $b} keys %UserSession) {
+      print "    $user: ";
+      if ($Detail >= 10) {
+         foreach my $session (sort {$a cmp $b} keys %{$UserSession{$user}}) {
+            print " $session";
+         }
+         print "\n";
+      } else {
+         print scalar(keys %{$UserSession{$user}}) . ": Time(s)";
+      }
+      print "\n";
+   }
+}
+
+if (keys %Slice && $Detail > 5) {
+   print "Slices created:\n";
+   foreach my $slice (sort {$a cmp $b} keys %Slice) {
+      print "    $slice: $Slice{$slice} Time(s)\n";
+   }
+    print "\n";
+}
+
+if (keys %OtherList) {
+   print "\n\n**Unmatched Entries**\n";
+   foreach my $line (sort {$a cmp $b} keys %OtherList) {
+      print "   $line: $OtherList{$line} Time(s)\n";
+   }
+}
+
+exit(0);
+
+# vi: shiftwidth=3 tabstop=3 syntax=perl et
+# Local Variables:
+# mode: perl
+# perl-indent-level: 3
+# indent-tabs-mode: nil
+# End:
